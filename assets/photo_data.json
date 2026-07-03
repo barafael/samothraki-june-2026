@@ -3846,5 +3846,29 @@
     "lng": 25.654347,
     "timestamp": "2026:06:19 05:20:10",
     "media_type": "image/jpeg"
+  },
+  {
+    "filename": "PXL_20260619_052016219.jpg",
+    "path": "photos/PXL_20260619_052016219.jpg",
+    "lat": 40.492979,
+    "lng": 25.654296,
+    "timestamp": "2026:06:19 05:20:16",
+    "media_type": "image/jpeg"
+  },
+  {
+    "filename": "PXL_20260619_052034004.jpg",
+    "path": "photos/PXL_20260619_052034004.jpg",
+    "lat": 40.492959,
+    "lng": 25.6543,
+    "timestamp": "2026:06:19 05:20:34",
+    "media_type": "image/jpeg"
+  },
+  {
+    "filename": "PXL_20260619_052038274.jpg",
+    "path": "photos/PXL_20260619_052038274.jpg",
+    "lat": 40.492971,
+    "lng": 25.65431,
+    "timestamp": "2026:06:19 05:20:38",
+    "media_type": "image/jpeg"
   }
 ]
