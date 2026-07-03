@@ -1,0 +1,42 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+#app {
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+#maplibre-canvas {
+    width: 100%;
+    height: 100%;
+}
+
+.divider {
+    user-select: none;
+}
+
+.divider:hover {
+    background: #ff6b35 !important;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+    cursor: pointer;
+}
+
+select option {
+    background: #222;
+    color: #ccc;
+}

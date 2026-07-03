@@ -1,0 +1,13 @@
+[application]
+
+[web.app]
+title = "My Samothrace Holiday"
+base_path = "/"
+
+[web.resource]
+style = ["/assets/main.css"]
+script = []
+
+[web.resource.dev]
+style = []
+script = []
