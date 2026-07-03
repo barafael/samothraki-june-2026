@@ -3886,5 +3886,45 @@
     "lng": 25.654243,
     "timestamp": "2026:06:19 05:24:59",
     "media_type": "image/jpeg"
+  },
+  {
+    "filename": "PXL_20260619_052531747.MP.jpg",
+    "path": "photos/PXL_20260619_052531747.MP.jpg",
+    "lat": 40.492992,
+    "lng": 25.654284,
+    "timestamp": "2026:06:19 05:25:31",
+    "media_type": "image/jpeg"
+  },
+  {
+    "filename": "PXL_20260619_053153564.jpg",
+    "path": "photos/PXL_20260619_053153564.jpg",
+    "lat": 40.492984,
+    "lng": 25.654266,
+    "timestamp": "2026:06:19 05:31:53",
+    "media_type": "image/jpeg"
+  },
+  {
+    "filename": "PXL_20260619_053155913.jpg",
+    "path": "photos/PXL_20260619_053155913.jpg",
+    "lat": 40.492969,
+    "lng": 25.654288,
+    "timestamp": "2026:06:19 05:31:55",
+    "media_type": "image/jpeg"
+  },
+  {
+    "filename": "PXL_20260619_053201310.jpg",
+    "path": "photos/PXL_20260619_053201310.jpg",
+    "lat": 40.492983,
+    "lng": 25.65428,
+    "timestamp": "2026:06:19 05:32:01",
+    "media_type": "image/jpeg"
+  },
+  {
+    "filename": "PXL_20260619_053208783.jpg",
+    "path": "photos/PXL_20260619_053208783.jpg",
+    "lat": 40.492962,
+    "lng": 25.654284,
+    "timestamp": "2026:06:19 05:32:08",
+    "media_type": "image/jpeg"
   }
 ]
