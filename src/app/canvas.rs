@@ -31,7 +31,7 @@ fn tag_expr_matches(expr: &str, photo_tags: &[String]) -> bool {
         return true;
     }
     let mut pos = 0;
-    
+
     eval_or(&tokens, &mut pos, photo_tags)
 }
 
@@ -222,8 +222,11 @@ fn update_selected_on_map(path: Option<&str>) {
     let filter = path
         .map(|p| format!("['==',['get','path'],'{}']", p.replace('\'', "\\'")))
         .unwrap_or_else(|| "['==',['get','path'],'']".into());
+    // Log a string, not the raw error object: the dx devtools console hook
+    // forwards console args over its websocket and rejects non-string payloads
+    // ("invalid type: map, expected a string").
     let _ = js_sys::eval(&format!(
-        "try{{var m=window.mapInstance;if(m)m.setFilter('holiday-photos-highlight',{})}}catch(e){{console.error(e)}}",
+        "try{{var m=window.mapInstance;if(m)m.setFilter('holiday-photos-highlight',{})}}catch(e){{console.error('setFilter failed: '+e)}}",
         filter,
     ));
 }
@@ -301,7 +304,7 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
 
     // Annotation state
     static NO_GPS_JSON: &str = include_str!("../../assets/photos_no_gps.json");
-    let no_gps_filenames: Vec<String> = {
+    let all_no_gps: Vec<String> = {
         serde_json::from_str::<serde_json::Value>(NO_GPS_JSON)
             .ok()
             .and_then(|v| {
@@ -317,12 +320,25 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
             })
             .unwrap_or_default()
     };
+    // Reactive: drop files that have since been annotated (now present in
+    // `photos`), so the dropdown shrinks as locations are assigned.
+    let no_gps_filenames: Vec<String> = {
+        let annotated: std::collections::HashSet<String> =
+            photos.read().iter().map(|p| p.filename.clone()).collect();
+        all_no_gps
+            .iter()
+            .filter(|f| !annotated.contains(*f))
+            .cloned()
+            .collect()
+    };
     let annotate_filename = use_signal(String::new);
     let annotate_lat = use_signal(String::new);
     let annotate_lng = use_signal(String::new);
     let annotate_saving = use_signal(|| false);
     let annotate_status = use_signal(String::new);
     let preview_url = use_signal(String::new);
+    // When true, the next click on the map fills the lat/lng fields.
+    let picking_location = use_signal(|| false);
 
     // Load tags from server
     {
@@ -388,6 +404,18 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
     let mg_init = manager;
     let pt_init = photo_tags;
     let _pt_click = photo_tags;
+    // Captured by the map click handler for "pick a location" mode.
+    let pick_lat_init = annotate_lat;
+    let pick_lng_init = annotate_lng;
+    let pick_status_init = annotate_status;
+    let picking_init = picking_location;
+    // Captured by the marker-click handler so clicking a marker in annotate mode
+    // loads that photo into the form for re-positioning.
+    let edit_tab_init = active_tab;
+    let edit_fname_init = annotate_filename;
+    let edit_lat_init = annotate_lat;
+    let edit_lng_init = annotate_lng;
+    let edit_preview_init = preview_url;
 
     use_effect(move || {
         if !photos_loaded || *initialized.read() {
@@ -440,6 +468,15 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                         let spc2 = spc;
                         let sic2 = sic;
                         let pic2 = pic;
+                        let pick_lat = pick_lat_init;
+                        let pick_lng = pick_lng_init;
+                        let pick_status = pick_status_init;
+                        let picking = picking_init;
+                        let edit_tab = edit_tab_init;
+                        let edit_fname = edit_fname_init;
+                        let edit_lat = edit_lat_init;
+                        let edit_lng = edit_lng_init;
+                        let edit_preview = edit_preview_init;
 
                         Closure::wrap(Box::new(move || {
                             log::info("Style loaded, adding photo markers");
@@ -568,6 +605,11 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                     let mut pic3 = pic2;
                                     let plist3 = plist;
                                     let r3 = r2.clone();
+                                    let et = edit_tab;
+                                    let mut ef = edit_fname;
+                                    let mut ela = edit_lat;
+                                    let mut eln = edit_lng;
+                                    let mut ep = edit_preview;
 
                                     let ch = Closure::wrap(Box::new(move |event: JsValue| {
                                         let feats =
@@ -599,17 +641,28 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                                     js_sys::Reflect::get(&pv, &"path".into())
                                                         .ok()
                                                         .and_then(|v| v.as_string());
-                                                    if let Some(ref ph) = path {
-                                                        if let Some((idx, photo)) = plist3
-                                                            .read()
-                                                            .iter()
-                                                            .enumerate()
-                                                            .find(|(_, p)| p.path == *ph)
+                                                if let Some(ref ph) = path {
+                                                    if let Some((idx, photo)) = plist3
+                                                        .read()
+                                                        .iter()
+                                                        .enumerate()
+                                                        .find(|(_, p)| p.path == *ph)
                                                     {
                                                         update_selected_on_map(Some(ph));
                                                         pic3.set(Some(ph.clone()));
                                                         spc3.set(Some(photo.clone()));
                                                         sic3.set(Some(idx));
+                                                        // In annotate mode, load the clicked photo
+                                                        // into the form so its location can be edited.
+                                                        if *et.read() == "annotate" {
+                                                            ef.set(photo.filename.clone());
+                                                            ela.set(format!("{:.6}", photo.lat));
+                                                            eln.set(format!("{:.6}", photo.lng));
+                                                            ep.set(format!(
+                                                                "/photos/{}",
+                                                                photo.filename
+                                                            ));
+                                                        }
                                                     }
                                                 }
                                             }
@@ -621,6 +674,47 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                     ch.forget();
 
                                     let _ = js_sys::eval("(function(){var m=window.mapInstance;if(!m)return;m.on('mouseenter','holiday-photos-layer',function(){m.getCanvas().style.cursor='pointer'});m.on('mouseleave','holiday-photos-layer',function(){m.getCanvas().style.cursor=''})})();");
+
+                                    // "Pick a location" mode: a general map click fills the
+                                    // lat/lng fields, but only while picking is active.
+                                    let pick_handler = {
+                                        let mut pick_lat = pick_lat;
+                                        let mut pick_lng = pick_lng;
+                                        let mut pick_status = pick_status;
+                                        let mut picking = picking;
+                                        Closure::wrap(Box::new(move |e: JsValue| {
+                                            if !*picking.read() {
+                                                return;
+                                            }
+                                            let lnglat =
+                                                match js_sys::Reflect::get(&e, &"lngLat".into()) {
+                                                    Ok(v) => v,
+                                                    Err(_) => return,
+                                                };
+                                            let lng = js_sys::Reflect::get(&lnglat, &"lng".into())
+                                                .ok()
+                                                .and_then(|v| v.as_f64());
+                                            let lat = js_sys::Reflect::get(&lnglat, &"lat".into())
+                                                .ok()
+                                                .and_then(|v| v.as_f64());
+                                            if let (Some(lat), Some(lng)) = (lat, lng) {
+                                                pick_lat.set(format!("{:.6}", lat));
+                                                pick_lng.set(format!("{:.6}", lng));
+                                                pick_status.set("Location picked".to_string());
+                                                picking.set(false);
+                                                if let Some(map) = get_map_ref() {
+                                                    map.get_canvas()
+                                                        .dyn_ref::<web_sys::HtmlElement>()
+                                                        .map(|c| {
+                                                            c.style().set_property("cursor", "")
+                                                        });
+                                                }
+                                            }
+                                        })
+                                            as Box<dyn FnMut(JsValue)>)
+                                    };
+                                    map_ref.on("click", pick_handler.as_ref());
+                                    pick_handler.forget();
 
                                     log::info("Click handler set");
                                     r3();
@@ -649,6 +743,13 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
         "grab"
     } else {
         "default"
+    };
+    // While dragging, drop the transform transition so panning is real-time
+    // (not animated); otherwise keep it so zoom stays smooth.
+    let img_transition = if *img_dragging.read() {
+        "none"
+    } else {
+        "transform 0.15s"
     };
     let (date_min, date_max) = photo_date_range(&photos.read());
     let colored_tokens = colorize_expr(&filter_expr(), &all_tags());
@@ -879,28 +980,23 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                         af.set(fname.clone());
                                         al.set(String::new());
                                         alng.set(String::new());
-                                        st.set(String::new());
-                                        pu.set(String::new());
-                                        if !fname.is_empty() {
-                                            #[cfg(feature = "fullstack")]
-                                            spawn({
-                                                let mut st2 = st.clone();
-                                                let mut pu2 = pu.clone();
-                                                let fn2 = fname.clone();
-                                                async move {
-                                                    match server_fns::ensure_photo_copied(fn2).await {
-                                                        Ok(dst) => {
-                                                            st2.set("Photo loaded".to_string());
-                                                            pu2.set(format!("/{}", dst));
-                                                        }
-                                                        Err(e) => st2.set(format!("Copy error: {:?}", e)),
-                                                    }
-                                                }
-                                            });
+                                        // The photo is served directly from the source dir, so the
+                                        // preview URL needs no server round-trip.
+                                        if fname.is_empty() {
+                                            st.set(String::new());
+                                            pu.set(String::new());
+                                        } else {
+                                            st.set("Photo loaded".to_string());
+                                            pu.set(format!("/photos/{}", fname));
                                         }
                                     }
                                 },
                                 option { value: "", "Select a file…" }
+                                // An already-annotated photo (clicked on the map) isn't in the
+                                // no-GPS list; surface it so the select reflects what's loaded.
+                                if !annotate_filename().is_empty() && !no_gps_filenames.contains(&annotate_filename()) {
+                                    option { value: "{annotate_filename()}", "{annotate_filename()} (editing)" }
+                                }
                                 for fname in &no_gps_filenames {
                                     option { value: "{fname}", "{fname}" }
                                 }
@@ -932,16 +1028,46 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                 },
                             }
 
+                            // Pick-a-location button: toggles map click-to-pick mode
+                            button {
+                                style: if picking_location() {
+                                    "margin-top:6px; width:100%; padding:8px; border:none; border-radius:4px; background:#3a7bd5; color:#fff; font-size:0.8rem; cursor:pointer;"
+                                } else {
+                                    "margin-top:6px; width:100%; padding:8px; border:1px solid #3a7bd5; border-radius:4px; background:transparent; color:#8ab4f0; font-size:0.8rem; cursor:pointer;"
+                                },
+                                onclick: {
+                                    let mut picking = picking_location;
+                                    let mut status = annotate_status;
+                                    move |_| {
+                                        let now = !picking();
+                                        picking.set(now);
+                                        if let Some(map) = get_map_ref() {
+                                            let cursor = if now { "crosshair" } else { "" };
+                                            let _ = map.get_canvas()
+                                                .dyn_ref::<web_sys::HtmlElement>()
+                                                .map(|c| c.style().set_property("cursor", cursor));
+                                        }
+                                        status.set(if now {
+                                            "Click the map to pick a location".to_string()
+                                        } else {
+                                            String::new()
+                                        });
+                                    }
+                                },
+                                if picking_location() { "Click map to pick… (cancel)" } else { "📍 Pick a location on map" }
+                            }
+
                             // Save button
                             button {
                                 style: "{save_btn_style}",
                                 disabled: annotate_saving(),
                                 onclick: {
-                                    let mut af = annotate_filename;
-                                    let mut al = annotate_lat;
-                                    let mut alng = annotate_lng;
+                                    let af = annotate_filename;
+                                    let al = annotate_lat;
+                                    let alng = annotate_lng;
                                     let mut saving = annotate_saving;
                                     let mut status = annotate_status;
+                                    let no_gps = no_gps_filenames.clone();
                                     move |_| {
                                         let fname = af.read().clone();
                                         if fname.is_empty() { status.set("Select a file".to_string()); return; }
@@ -952,10 +1078,22 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                         saving.set(true);
                                         status.set("Saving...".to_string());
 
+                                        // The file to load once this save succeeds: the next one
+                                        // in the no-GPS list, or empty if this was the last.
+                                        let next_file = no_gps
+                                            .iter()
+                                            .position(|f| *f == fname)
+                                            .and_then(|i| no_gps.get(i + 1))
+                                            .cloned()
+                                            .unwrap_or_default();
+
                                         #[cfg(feature = "fullstack")]
                                         {
                                             let lat = al.read().parse::<f64>().unwrap_or(0.0);
                                             let lng = alng.read().parse::<f64>().unwrap_or(0.0);
+                                            let mut af = af;
+                                            let mut al = al;
+                                            let mut alng = alng;
                                             let mut ps = photos;
                                             let mut pu2 = preview_url;
                                             spawn({
@@ -970,12 +1108,18 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                                                 list.push(entry);
                                                             }
                                                             ps.set(list);
-                                                            status.set("Saved!".to_string());
                                                             saving.set(false);
                                                             al.set(String::new());
                                                             alng.set(String::new());
-                                                            af.set(String::new());
-                                                            pu2.set(String::new());
+                                                            // Auto-advance to the next unannotated file.
+                                                            af.set(next_file.clone());
+                                                            if next_file.is_empty() {
+                                                                status.set("Saved! No more files.".to_string());
+                                                                pu2.set(String::new());
+                                                            } else {
+                                                                status.set(format!("Saved! Next: {}", next_file));
+                                                                pu2.set(format!("/photos/{}", next_file));
+                                                            }
                                                             r2();
                                                         }
                                                         Err(e) => {
@@ -989,6 +1133,8 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
 
                                         #[cfg(not(feature = "fullstack"))]
                                         {
+                                            let mut af = af;
+                                            af.set(next_file);
                                             status.set("Saved (in-memory, server required for persistence)".to_string());
                                             saving.set(false);
                                         }
@@ -1052,8 +1198,10 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                         r#loop: "true",
                                     }
                                 } else {
+                                    // No transform transition while dragging, so panning tracks the
+                                    // cursor in real time; keep the smooth transition for zoom.
                                     img {
-                                        style: "max-width:100%; max-height:100%; object-fit:contain; border-radius:4px; transition:transform 0.15s; transform: translate({pan_x()}px, {pan_y()}px) scale({zoom_level()});",
+                                        style: "max-width:100%; max-height:100%; object-fit:contain; border-radius:4px; transition:{img_transition}; transform: translate({pan_x()}px, {pan_y()}px) scale({zoom_level()});",
                                         src: "/{photo.path}",
                                     }
                                 }

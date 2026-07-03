@@ -1,4 +1,2 @@
-assets/photos/**/*.jpg filter=lfs diff=lfs merge=lfs -text
-assets/photos/**/*.mp4 filter=lfs diff=lfs merge=lfs -text
 Photos-3-001/**/*.jpg filter=lfs diff=lfs merge=lfs -text
 Photos-3-001/**/*.mp4 filter=lfs diff=lfs merge=lfs -text

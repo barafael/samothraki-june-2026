@@ -18,7 +18,9 @@ fn parse_ffprobe_location(loc: &str) -> Option<(f64, f64)> {
     // Formats: "+40.4839+25.4786/" or "+40.4839+25.4786+0.000/"
     let s = loc.trim_end_matches('/');
     let bytes = s.as_bytes();
-    if bytes.is_empty() { return None; }
+    if bytes.is_empty() {
+        return None;
+    }
     // Find the second +/- that starts the longitude
     let first_sign_pos = bytes.iter().position(|&b| b == b'+' || b == b'-')?;
     let rest = &s[first_sign_pos + 1..];
@@ -55,7 +57,7 @@ fn extract_rational_array(val: &exif::Value) -> Option<[f64; 3]> {
 
 fn process_jpeg(path: &Path, rel_path: &str) -> Option<PhotoEntry> {
     let file = fs::File::open(path).ok()?;
-    let mut reader = Reader::new();
+    let reader = Reader::new();
     let exif: Exif = reader
         .read_from_container(&mut std::io::BufReader::new(file))
         .ok()?;
@@ -93,7 +95,7 @@ fn process_jpeg(path: &Path, rel_path: &str) -> Option<PhotoEntry> {
 
     Some(PhotoEntry {
         filename,
-        path: format!("assets/photos/{}", rel_path),
+        path: format!("photos/{}", rel_path),
         lat,
         lng,
         timestamp,
@@ -118,11 +120,7 @@ fn process_via_ffprobe(path: &Path, rel_path: &str) -> Option<PhotoEntry> {
     };
 
     let output = Command::new("ffprobe")
-        .args([
-            "-v", "quiet",
-            "-print_format", "json",
-            "-show_format",
-        ])
+        .args(["-v", "quiet", "-print_format", "json", "-show_format"])
         .arg(path.as_os_str())
         .output()
         .ok()?;
@@ -136,7 +134,8 @@ fn process_via_ffprobe(path: &Path, rel_path: &str) -> Option<PhotoEntry> {
     let (lat, lng) = parse_ffprobe_location(loc)?;
 
     // Parse creation_time like "2026-06-18T16:00:37.000000Z"
-    let ts = tags.get("creation_time")
+    let ts = tags
+        .get("creation_time")
         .or_else(|| tags.get("creation_time-eng"))
         .or_else(|| tags.get("date"))
         .and_then(|v| v.as_str())
@@ -154,7 +153,7 @@ fn process_via_ffprobe(path: &Path, rel_path: &str) -> Option<PhotoEntry> {
 
     Some(PhotoEntry {
         filename,
-        path: format!("assets/photos/{}", rel_path),
+        path: format!("photos/{}", rel_path),
         lat,
         lng,
         timestamp,
@@ -163,13 +162,28 @@ fn process_via_ffprobe(path: &Path, rel_path: &str) -> Option<PhotoEntry> {
 }
 
 fn is_supported(ext: &str) -> bool {
-    matches!(ext, "jpg" | "jpeg" | "mp4" | "mov" | "avi" | "webm" | "heic" | "heif" | "webp" | "png" | "gif" | "tiff" | "tif")
+    matches!(
+        ext,
+        "jpg"
+            | "jpeg"
+            | "mp4"
+            | "mov"
+            | "avi"
+            | "webm"
+            | "heic"
+            | "heif"
+            | "webp"
+            | "png"
+            | "gif"
+            | "tiff"
+            | "tif"
+    )
 }
 
 fn main() {
+    // Photos are served directly from `Photos-3-001` (see the `/photos` route in
+    // src/main.rs), so this tool only extracts metadata — it never copies media.
     let photos_dir = Path::new("Photos-3-001");
-    let assets_photos = Path::new("assets/photos");
-    fs::create_dir_all(assets_photos).expect("create assets/photos");
 
     let mut entries = Vec::new();
 
@@ -203,11 +217,6 @@ fn main() {
         };
 
         if let Some(photo) = photo {
-            // Copy photo to assets/photos/
-            let dest = assets_photos.join(&filename);
-            if !dest.exists() {
-                fs::copy(&path, &dest).expect("copy media");
-            }
             entries.push(photo);
             eprintln!("  OK  {}", filename);
         } else {
@@ -218,5 +227,8 @@ fn main() {
     let json = serde_json::to_string_pretty(&entries).expect("serialize");
     fs::write("assets/photo_data.json", &json).expect("write photo_data.json");
 
-    eprintln!("\nWrote {} entries to assets/photo_data.json", entries.len());
+    eprintln!(
+        "\nWrote {} entries to assets/photo_data.json",
+        entries.len()
+    );
 }

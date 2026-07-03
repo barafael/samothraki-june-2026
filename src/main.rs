@@ -19,9 +19,16 @@ fn main() {
     init_logging();
     utils::log::info("My Holiday app starting...");
 
-    // dx serve --fullstack passes `server` for the native server build
+    // dx serve --fullstack passes `server` for the native server build.
+    // We serve the original photo directory directly at `/photos/<file>` via a
+    // static file service, so photos are never copied or duplicated into assets.
     #[cfg(feature = "server")]
-    dioxus::LaunchBuilder::server().launch(app::App);
+    dioxus::serve(|| async move {
+        use tower_http::services::ServeDir;
+        let router = dioxus::server::router(app::App)
+            .nest_service("/photos", ServeDir::new(server_fns::PHOTOS_SRC_DIR));
+        Ok(router)
+    });
 
     // Everything else (plain web, or fullstack client build)
     #[cfg(not(feature = "server"))]
