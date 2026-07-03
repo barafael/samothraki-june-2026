@@ -3870,5 +3870,21 @@
     "lng": 25.65431,
     "timestamp": "2026:06:19 05:20:38",
     "media_type": "image/jpeg"
+  },
+  {
+    "filename": "PXL_20260619_052207281.jpg",
+    "path": "photos/PXL_20260619_052207281.jpg",
+    "lat": 40.493107,
+    "lng": 25.654239,
+    "timestamp": "2026:06:19 05:22:07",
+    "media_type": "image/jpeg"
+  },
+  {
+    "filename": "PXL_20260619_052459417.jpg",
+    "path": "photos/PXL_20260619_052459417.jpg",
+    "lat": 40.493084,
+    "lng": 25.654243,
+    "timestamp": "2026:06:19 05:24:59",
+    "media_type": "image/jpeg"
   }
 ]
