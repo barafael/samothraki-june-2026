@@ -49,6 +49,15 @@ fn timestamp_from_filename(filename: &str) -> String {
     "unknown".to_string()
 }
 
+#[server(endpoint = "photos/load")]
+pub async fn load_photo_data() -> Result<Vec<PhotoEntry>, ServerFnError> {
+    let content = tokio::fs::read_to_string(PHOTO_DATA_PATH)
+        .await
+        .unwrap_or_else(|_| "[]".to_string());
+    let entries: Vec<PhotoEntry> = serde_json::from_str(&content).unwrap_or_default();
+    Ok(entries)
+}
+
 #[server(endpoint = "tags/load")]
 pub async fn load_tags() -> Result<HashMap<String, Vec<String>>, ServerFnError> {
     let content = tokio::fs::read_to_string(TAGS_PATH)

@@ -5,19 +5,26 @@ mod canvas;
 use crate::data::PhotoEntry;
 use canvas::Canvas;
 
-static PHOTO_DATA: &str = include_str!("../../assets/photo_data.json");
+#[cfg(feature = "fullstack")]
+use crate::server_fns;
 
 #[component]
 pub fn App() -> Element {
     let mut photos = use_signal(Vec::<PhotoEntry>::new);
     let mut photos_loaded = use_signal(|| false);
 
+    // Load photo data at runtime (not `include_str!`), so annotations saved by
+    // the server show up without a rebuild and writing the file doesn't retrigger
+    // one (it's no longer a compile-time dependency).
     use_future(move || async move {
         if *photos_loaded.read() {
             return;
         }
-        if let Ok(data) = serde_json::from_str::<Vec<PhotoEntry>>(PHOTO_DATA) {
-            photos.set(data);
+        #[cfg(feature = "fullstack")]
+        {
+            if let Ok(data) = server_fns::load_photo_data().await {
+                photos.set(data);
+            }
             photos_loaded.set(true);
         }
     });
