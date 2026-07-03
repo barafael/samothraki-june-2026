@@ -4,22 +4,31 @@ use dioxus::prelude::*;
 
 use crate::data::PhotoEntry;
 
+// These items are only referenced from `#[server]` fn bodies (and the server
+// router), which are stripped on the wasm client — gate them to `server` so the
+// client doesn't see them as dead code.
+#[cfg(feature = "server")]
 const TAGS_PATH: &str = "assets/photo_tags.json";
+#[cfg(feature = "server")]
 const PHOTO_DATA_PATH: &str = "assets/photo_data.json";
 
 /// Original photo directory. Served directly at `/photos/<file>` by the axum
 /// router in `main.rs`, so photos are never copied or duplicated into assets.
+#[cfg(feature = "server")]
 pub const PHOTOS_SRC_DIR: &str = "Photos-3-001";
 
 /// Client-facing path for a photo, matching the `/photos` static route.
+#[cfg(feature = "server")]
 fn photo_path(filename: &str) -> String {
     format!("photos/{}", filename)
 }
 
+#[cfg(feature = "server")]
 fn default_media_type() -> String {
     "image/jpeg".into()
 }
 
+#[cfg(feature = "server")]
 fn timestamp_from_filename(filename: &str) -> String {
     // PXL_YYYYMMDD_HHMMSSxxx.jpg -> "YYYY:MM:DD HH:MM:SS"
     if let Some(rest) = filename.strip_prefix("PXL_") {
