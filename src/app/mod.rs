@@ -29,7 +29,7 @@ pub fn App() -> Element {
 
             header {
                 style: "padding:8px 16px; background:#1a1a2e; color:#eee; font-family:sans-serif; display:flex; align-items:center; gap:12px;",
-                h1 { style: "margin:0; font-size:1.2rem;", "Samothrace Holiday" }
+                h1 { style: "margin:0; font-size:1.2rem;", "Samothraki Holiday" }
                 span { style: "font-size:0.85rem; color:#999;",
                     if *photos_loaded.read() {
                         "{photos.read().len()} photos"

@@ -1,7 +1,7 @@
 [application]
 
 [web.app]
-title = "My Samothrace Holiday"
+title = "My Samothraki Holiday"
 base_path = "/"
 
 [web.resource]
