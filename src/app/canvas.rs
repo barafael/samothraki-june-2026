@@ -218,6 +218,23 @@ fn photo_date_range(photos: &[PhotoEntry]) -> (String, String) {
     (min.clone(), max.clone())
 }
 
+/// Toggle the `.picking` CSS class on the map container. The class forces a
+/// crosshair cursor via `!important`, which reliably overrides MapLibre's own
+/// inline cursor (grab/pointer) that it sets during interaction.
+fn set_map_picking_cursor(on: bool) {
+    let el = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id("map-container"));
+    if let Some(el) = el {
+        let list = el.class_list();
+        let _ = if on {
+            list.add_1("picking")
+        } else {
+            list.remove_1("picking")
+        };
+    }
+}
+
 fn update_selected_on_map(path: Option<&str>) {
     let filter = path
         .map(|p| format!("['==',['get','path'],'{}']", p.replace('\'', "\\'")))
@@ -339,6 +356,21 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
     let preview_url = use_signal(String::new);
     // When true, the next click on the map fills the lat/lng fields.
     let picking_location = use_signal(|| false);
+
+    // Reset zoom/pan whenever the annotation preview changes, so each photo
+    // opens at 1:1 (the pan/zoom signals are shared with the gallery view).
+    {
+        let mut zl = zoom_level;
+        let mut px = pan_x;
+        let mut py = pan_y;
+        let pu = preview_url;
+        use_effect(move || {
+            let _ = pu.read();
+            zl.set(1.0);
+            px.set(0.0);
+            py.set(0.0);
+        });
+    }
 
     // Load tags from server
     {
@@ -610,8 +642,14 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                     let mut ela = edit_lat;
                                     let mut eln = edit_lng;
                                     let mut ep = edit_preview;
+                                    let picking_sel = picking;
 
                                     let ch = Closure::wrap(Box::new(move |event: JsValue| {
+                                        // In pick mode, a marker click must pick coordinates, not
+                                        // select the marker; let the general click handler take it.
+                                        if *picking_sel.read() {
+                                            return;
+                                        }
                                         let feats =
                                             js_sys::Reflect::get(&event, &"features".into())
                                                 .ok()
@@ -702,13 +740,7 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                                 pick_lng.set(format!("{:.6}", lng));
                                                 pick_status.set("Location picked".to_string());
                                                 picking.set(false);
-                                                if let Some(map) = get_map_ref() {
-                                                    map.get_canvas()
-                                                        .dyn_ref::<web_sys::HtmlElement>()
-                                                        .map(|c| {
-                                                            c.style().set_property("cursor", "")
-                                                        });
-                                                }
+                                                set_map_picking_cursor(false);
                                             }
                                         })
                                             as Box<dyn FnMut(JsValue)>)
@@ -908,10 +940,12 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                             if z > 1.05 {
                                 let cx = e.data.coordinates().client().x;
                                 let cy = e.data.coordinates().client().y;
+                                // translate() is applied in the parent (unscaled) space, so add
+                                // the raw cursor delta for 1:1 drag tracking.
                                 let dx = cx - pcx();
                                 let dy = cy - pcy();
-                                px.set(px() + dx / z);
-                                py.set(py() + dy / z);
+                                px.set(px() + dx);
+                                py.set(py() + dy);
                                 pcx.set(cx);
                                 pcy.set(cy);
                             }
@@ -1041,12 +1075,7 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                     move |_| {
                                         let now = !picking();
                                         picking.set(now);
-                                        if let Some(map) = get_map_ref() {
-                                            let cursor = if now { "crosshair" } else { "" };
-                                            let _ = map.get_canvas()
-                                                .dyn_ref::<web_sys::HtmlElement>()
-                                                .map(|c| c.style().set_property("cursor", cursor));
-                                        }
+                                        set_map_picking_cursor(now);
                                         status.set(if now {
                                             "Click the map to pick a location".to_string()
                                         } else {
@@ -1148,13 +1177,58 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                 p { style: "margin:4px 0 0; font-size:0.75rem; color:#ff6b35;", "{annotate_status()}" }
                             }
 
-                            // Photo preview
+                            // Photo preview — pan/zoom like the main gallery view.
                             if !preview_url().is_empty() {
                                 div {
-                                    style: "flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; min-height:0; background:#000; border-radius:4px; margin-top:4px;",
-                                    img {
-                                        style: "max-width:100%; max-height:100%; object-fit:contain;",
-                                        src: "{preview_url()}",
+                                    style: "flex:1; position:relative; overflow:hidden; min-height:0; background:#000; border-radius:4px; margin-top:4px;",
+                                    div {
+                                        style: "width:100%; height:100%; display:flex; align-items:center; justify-content:center; overflow:hidden; cursor:{cursor};",
+                                        onmousedown: {
+                                            let mut id = img_dragging;
+                                            let mut pcx = pan_client_x;
+                                            let mut pcy = pan_client_y;
+                                            move |e| {
+                                                if zoom_level() > 1.05 {
+                                                    pcx.set(e.data.coordinates().client().x);
+                                                    pcy.set(e.data.coordinates().client().y);
+                                                    id.set(true);
+                                                    e.prevent_default();
+                                                }
+                                            }
+                                        },
+                                        img {
+                                            style: "max-width:100%; max-height:100%; object-fit:contain; border-radius:4px; transition:{img_transition}; transform: translate({pan_x()}px, {pan_y()}px) scale({zoom_level()});",
+                                            src: "{preview_url()}",
+                                        }
+                                    }
+                                    div {
+                                        style: "position:absolute; bottom:8px; right:8px; display:flex; gap:4px;",
+                                        button {
+                                            style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:1.2rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
+                                            onclick: {
+                                                let mut zl = zoom_level;
+                                                move |_| zl.set((zl() * 1.5_f64).min(10.0))
+                                            },
+                                            "+"
+                                        }
+                                        button {
+                                            style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:1.2rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
+                                            onclick: {
+                                                let mut zl = zoom_level;
+                                                move |_| zl.set((zl() / 1.5_f64).max(0.25))
+                                            },
+                                            "−"
+                                        }
+                                        button {
+                                            style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:0.8rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
+                                            onclick: {
+                                                let mut zl = zoom_level;
+                                                let mut px = pan_x;
+                                                let mut py = pan_y;
+                                                move |_| { zl.set(1.0); px.set(0.0); py.set(0.0); }
+                                            },
+                                            "1:1"
+                                        }
                                     }
                                 }
                             }

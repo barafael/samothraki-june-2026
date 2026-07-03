@@ -23,6 +23,13 @@ html, body {
     height: 100%;
 }
 
+/* Location-pick mode: force the crosshair everywhere in the map, overriding
+   MapLibre's own inline cursor (grab/pointer) which it sets on interaction. */
+#map-container.picking,
+#map-container.picking * {
+    cursor: crosshair !important;
+}
+
 .divider {
     user-select: none;
 }
