@@ -17,6 +17,12 @@ const PHOTO_DATA_PATH: &str = "assets/photo_data.json";
 #[cfg(feature = "server")]
 pub const PHOTOS_SRC_DIR: &str = "Photos-3-001";
 
+/// Web-playable (H.264) video transcodes, served at `/media/<file>`. Produced
+/// by scripts/transcode_videos.sh from the HEVC originals (browsers can't play
+/// HEVC in <video>). Gitignored derived artifacts.
+#[cfg(feature = "server")]
+pub const MEDIA_WEB_DIR: &str = "media-web";
+
 /// Client-facing path for a photo, matching the `/photos` static route.
 #[cfg(feature = "server")]
 fn photo_path(filename: &str) -> String {

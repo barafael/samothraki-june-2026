@@ -1,1 +1,3 @@
 /target
+# Derived web-playable (H.264) transcodes of the HEVC source videos.
+/media-web

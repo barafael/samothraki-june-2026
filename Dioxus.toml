@@ -5,7 +5,9 @@ title = "My Samothraki Holiday"
 base_path = "/"
 
 [web.resource]
-style = ["/assets/main.css"]
+# main.css is bundled via the asset!() pipeline and injected with
+# document::Stylesheet in src/app/mod.rs — not through this legacy list.
+style = []
 script = []
 
 [web.resource.dev]

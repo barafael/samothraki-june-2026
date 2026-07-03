@@ -8,6 +8,10 @@ use canvas::Canvas;
 #[cfg(feature = "fullstack")]
 use crate::server_fns;
 
+// Bundle the stylesheet through the asset pipeline so it's actually served
+// (the legacy `[web.resource] style` entry in Dioxus.toml is not copied in 0.7).
+const MAIN_CSS: Asset = asset!("/assets/main.css");
+
 #[component]
 pub fn App() -> Element {
     let mut photos = use_signal(Vec::<PhotoEntry>::new);
@@ -30,6 +34,7 @@ pub fn App() -> Element {
     });
 
     rsx! {
+        document::Stylesheet { href: MAIN_CSS }
         div {
             id: "app",
             style: "width:100%; height:100vh; display:flex; flex-direction:column;",
@@ -46,7 +51,7 @@ pub fn App() -> Element {
                 }
             }
 
-            Canvas { photos, photos_loaded: *photos_loaded.read() }
+            Canvas { photos, photos_loaded }
         }
     }
 }

@@ -66,13 +66,14 @@ fn main() {
     utils::log::info("My Holiday app starting...");
 
     // dx serve --fullstack passes `server` for the native server build.
-    // We serve the original photo directory directly at `/photos/<file>` via a
-    // static file service, so photos are never copied or duplicated into assets.
+    // Serve the original photos at `/photos/<file>` and the H.264 transcodes of
+    // the (HEVC) videos at `/media/<file>` — both directly, no copying.
     #[cfg(feature = "server")]
     dioxus::serve(|| async move {
         use tower_http::services::ServeDir;
         let router = dioxus::server::router(app::App)
-            .nest_service("/photos", ServeDir::new(server_fns::PHOTOS_SRC_DIR));
+            .nest_service("/photos", ServeDir::new(server_fns::PHOTOS_SRC_DIR))
+            .nest_service("/media", ServeDir::new(server_fns::MEDIA_WEB_DIR));
         Ok(router)
     });
 

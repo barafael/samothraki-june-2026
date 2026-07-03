@@ -235,6 +235,34 @@ fn set_map_picking_cursor(on: bool) {
     }
 }
 
+/// URL for a video's browser-playable (H.264) transcode: the originals are HEVC
+/// and won't play in <video>, so videos are served from `/media/` (transcoded),
+/// while photos stay on `/photos/`. `path` is stored as `photos/<file>`.
+fn web_video_url(path: &str) -> String {
+    let file = path.strip_prefix("photos/").unwrap_or(path);
+    format!("/media/{}", file)
+}
+
+/// Index of the photo `step` positions from `cur` in chronological order.
+/// `photos` isn't stored time-sorted, so we sort indices by timestamp (the
+/// `YYYY:MM:DD HH:MM:SS` format sorts chronologically) and wrap around.
+fn neighbor_in_time(photos: &[PhotoEntry], cur: usize, step: isize) -> Option<usize> {
+    if photos.is_empty() {
+        return None;
+    }
+    let mut order: Vec<usize> = (0..photos.len()).collect();
+    order.sort_by(|&a, &b| {
+        photos[a]
+            .timestamp
+            .cmp(&photos[b].timestamp)
+            .then(photos[a].filename.cmp(&photos[b].filename))
+    });
+    let pos = order.iter().position(|&i| i == cur)?;
+    let n = order.len() as isize;
+    let next_pos = (((pos as isize + step) % n) + n) % n;
+    Some(order[next_pos as usize])
+}
+
 fn update_selected_on_map(path: Option<&str>) {
     let filter = path
         .map(|p| format!("['==',['get','path'],'{}']", p.replace('\'', "\\'")))
@@ -293,7 +321,7 @@ fn apply_filters(
 }
 
 #[component]
-pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
+pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> Element {
     let manager = use_signal(MapLibreManager::new);
     let mut initialized = use_signal(|| false);
     let selected_photo = use_signal(|| None::<PhotoEntry>);
@@ -450,7 +478,9 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
     let edit_preview_init = preview_url;
 
     use_effect(move || {
-        if !photos_loaded || *initialized.read() {
+        // Read the signal so the effect re-runs once photos finish loading
+        // (the data is fetched async, so it isn't ready on first render).
+        if !*photos_loaded.read() || *initialized.read() {
             return;
         }
         initialized.set(true);
@@ -1266,7 +1296,7 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                 if photo.media_type.starts_with("video/") {
                                     video {
                                         style: "max-width:100%; max-height:100%; border-radius:4px;",
-                                        src: "/{photo.path}",
+                                        src: web_video_url(&photo.path),
                                         controls: "true",
                                         autoplay: "true",
                                         r#loop: "true",
@@ -1329,15 +1359,17 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                         let mut py = pan_y;
                                         move |_| {
                                             if let Some(idx) = si() {
-                                                let ni = if idx > 0 { idx - 1 } else { photos_p.read().len() - 1 };
-                                                        if let Some(p) = photos_p.read().get(ni) {
-                                                    update_selected_on_map(Some(&p.path));
-                                                    sp.set(Some(p.clone()));
-                                                    si.set(Some(ni));
-                                                    pi.set(Some(p.path.clone()));
-                                                    zl.set(1.0);
-                                                    px.set(0.0);
-                                                    py.set(0.0);
+                                                let ni = neighbor_in_time(&photos_p.read(), idx, -1);
+                                                if let Some(ni) = ni {
+                                                    if let Some(p) = photos_p.read().get(ni) {
+                                                        update_selected_on_map(Some(&p.path));
+                                                        sp.set(Some(p.clone()));
+                                                        si.set(Some(ni));
+                                                        pi.set(Some(p.path.clone()));
+                                                        zl.set(1.0);
+                                                        px.set(0.0);
+                                                        py.set(0.0);
+                                                    }
                                                 }
                                             }
                                         }
@@ -1362,15 +1394,17 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: bool) -> Element {
                                         let mut py = pan_y;
                                         move |_| {
                                             if let Some(idx) = si() {
-                                                let ni = (idx + 1) % photos_n.read().len();
-                                                if let Some(p) = photos_n.read().get(ni) {
-                                                    update_selected_on_map(Some(&p.path));
-                                                    sp.set(Some(p.clone()));
-                                                    si.set(Some(ni));
-                                                    pi.set(Some(p.path.clone()));
-                                                    zl.set(1.0);
-                                                    px.set(0.0);
-                                                    py.set(0.0);
+                                                let ni = neighbor_in_time(&photos_n.read(), idx, 1);
+                                                if let Some(ni) = ni {
+                                                    if let Some(p) = photos_n.read().get(ni) {
+                                                        update_selected_on_map(Some(&p.path));
+                                                        sp.set(Some(p.clone()));
+                                                        si.set(Some(ni));
+                                                        pi.set(Some(p.path.clone()));
+                                                        zl.set(1.0);
+                                                        px.set(0.0);
+                                                        py.set(0.0);
+                                                    }
                                                 }
                                             }
                                         }
