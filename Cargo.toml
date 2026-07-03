@@ -9,7 +9,7 @@ edition = "2021"
 
 [dependencies]
 console_error_panic_hook = "0.1"
-dioxus = { version = "=0.7.3", features = [] }
+dioxus = { version = "=0.7.9", features = [] }
 js-sys = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"

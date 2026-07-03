@@ -11,30 +11,47 @@ fn init_logging() {
     coerce_console_to_strings();
 }
 
-/// The dx dev devtools hook forwards `console.error`/`console.warn` arguments
-/// over its websocket and rejects any non-string payload with
-/// "invalid type: map, expected a string". Third-party JS (MapLibre) logs raw
-/// error/event *objects*, which trip that parser and spam the dev server.
+/// dx's devtools `monkeyPatchConsole` forwards raw `console.*` args over its
+/// websocket as `{Log:{level,messages:args}}`, where `messages` must deserialize
+/// to `Vec<String>`. Third-party JS (MapLibre) logs error/event *objects*, so
+/// `messages:[{}]` reaches the dev server and fails to parse
+/// ("invalid type: map, expected a string") — spamming the log and, because the
+/// bad frame breaks the websocket, restarting the app.
 ///
-/// Wrap the console methods so every argument is coerced to a string before it
-/// reaches the dx hook. Installed at startup, after the hook, so ours runs first.
+/// Fix: coerce every console arg to a string, and make our wrapper the OUTERMOST
+/// one. dx patches the console asynchronously (after `launch`), so we can't just
+/// wrap once at startup — dx would wrap over us and send the raw object first.
+/// Instead we re-assert on an interval: whenever `console.error` isn't our marked
+/// wrapper, re-wrap the current function (idempotent via the marker). This way we
+/// stringify before dx's wrapper serializes the args.
 #[cfg(target_arch = "wasm32")]
 fn coerce_console_to_strings() {
     let _ = js_sys::eval(
         r#"(function(){
             var c = console;
-            ['error','warn','info','log','debug'].forEach(function(name){
-                var orig = c[name];
-                if (typeof orig !== 'function') return;
-                c[name] = function(){
-                    var args = Array.prototype.map.call(arguments, function(a){
-                        if (typeof a === 'string') return a;
-                        if (a instanceof Error) return a.stack || (a.name + ': ' + a.message);
-                        try { return JSON.stringify(a); } catch (e) { return String(a); }
-                    });
-                    return orig.apply(c, args);
-                };
-            });
+            var names = ['error','warn','info','log','debug'];
+            var MARK = '__coerced_to_string';
+            function stringify(a){
+                if (typeof a === 'string') return a;
+                if (a instanceof Error) return a.stack || (a.name + ': ' + a.message);
+                try { return JSON.stringify(a); } catch (e) { return String(a); }
+            }
+            function reassert(){
+                names.forEach(function(name){
+                    var cur = c[name];
+                    if (typeof cur !== 'function' || cur[MARK]) return;
+                    var inner = cur;
+                    var wrapped = function(){
+                        return inner.apply(c, Array.prototype.map.call(arguments, stringify));
+                    };
+                    wrapped[MARK] = true;
+                    c[name] = wrapped;
+                });
+            }
+            reassert();
+            // Re-assert for a short window so we end up outermost once dx patches.
+            var n = 0;
+            var id = setInterval(function(){ reassert(); if (++n > 40) clearInterval(id); }, 50);
         })();"#,
     );
 }
