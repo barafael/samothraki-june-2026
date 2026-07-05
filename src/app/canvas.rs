@@ -384,6 +384,25 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
     let preview_url = use_signal(String::new);
     // When true, the next click on the map fills the lat/lng fields.
     let picking_location = use_signal(|| false);
+    // Double-click a photo to view it fullscreen; ESC exits.
+    let fullscreen = use_signal(|| false);
+
+    // Global ESC handler: leave fullscreen. Installed once.
+    {
+        let mut fs = fullscreen;
+        use_effect(move || {
+            let handler = Closure::wrap(Box::new(move |e: web_sys::KeyboardEvent| {
+                if e.key() == "Escape" {
+                    fs.set(false);
+                }
+            }) as Box<dyn FnMut(web_sys::KeyboardEvent)>);
+            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                let _ = doc
+                    .add_event_listener_with_callback("keydown", handler.as_ref().unchecked_ref());
+            }
+            handler.forget();
+        });
+    }
 
     // Reset zoom/pan whenever the annotation preview changes, so each photo
     // opens at 1:1 (the pan/zoom signals are shared with the gallery view).
@@ -1271,9 +1290,17 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
                         }
                     } else if let Some(photo) = selected_photo() {
                         div {
-                            style: "flex:1; display:flex; flex-direction:column; overflow:hidden; position:relative;",
+                            style: if fullscreen() {
+                                "position:fixed; inset:0; z-index:9999; background:#000; display:flex; flex-direction:column; overflow:hidden;"
+                            } else {
+                                "flex:1; display:flex; flex-direction:column; overflow:hidden; position:relative;"
+                            },
                             div {
                                 style: "flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; padding:8px; cursor:{cursor};",
+                                ondoubleclick: {
+                                    let mut fs = fullscreen;
+                                    move |_| { let now = !fs(); fs.set(now); }
+                                },
                                 onmousedown: {
                                     let mut id = img_dragging;
                                     let mut pax = pan_anchor_x;
@@ -1311,7 +1338,18 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
                                 }
                             }
                             div {
-                                style: "position:absolute; bottom:8px; right:8px; display:flex; gap:4px;",
+                                style: "position:absolute; bottom:8px; right:8px; display:flex; gap:4px; z-index:1;",
+                                if fullscreen() {
+                                    button {
+                                        style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:0.9rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
+                                        title: "Exit fullscreen (Esc)",
+                                        onclick: {
+                                            let mut fs = fullscreen;
+                                            move |_| fs.set(false)
+                                        },
+                                        "✕"
+                                    }
+                                }
                                 button {
                                     style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:1.2rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
                                     onclick: {
