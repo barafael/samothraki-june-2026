@@ -13,8 +13,11 @@
 //! thumbnails carry `thumbs/`, so the base is the *root* the whole asset tree
 //! hangs off — not the photos dir specifically.
 
-/// Asset base URL, resolved at compile time. Empty (root-relative) by default.
-/// Override with `ASSET_BASE_URL=…` when building the viewer for deployment.
+// Asset base URL, resolved at compile time. Empty (root-relative) by default;
+// override with `ASSET_BASE_URL=…` when building the viewer for deployment.
+// (Plain `//` not `///`: the const comes from an `include!`, and a doc comment
+// on a macro invocation warns — "rustdoc does not generate documentation for
+// macro invocations".)
 // ASSET_BASE_URL is baked in by build.rs, which writes an `asset_base_url.rs`
 // into OUT_DIR containing `pub const ASSET_BASE_URL: &str = "...";`. We generate
 // a source file (rather than use option_env!/cargo:rustc-env) because dx's
