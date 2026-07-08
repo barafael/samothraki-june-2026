@@ -48,11 +48,15 @@ default = ["web"]
 # comes from `manifest.json` fetched at runtime; images load from ASSET_BASE_URL.
 web = ["dioxus/web"]
 
-# EDITOR (local only). The client half of the fullstack app, built by `dx` with
-# `--features editor`. Pulls in `dioxus/fullstack` so `#[server]` fns compile to
-# client RPC stubs and the `#[cfg(feature = "fullstack")]` gates match the server
-# build. Never deployed.
-editor = ["dioxus/web", "fullstack"]
+# EDITOR (local only). Additive layer on top of the `web` renderer: it pulls in
+# `dioxus/fullstack` (so `#[server]` fns compile to client RPC stubs and the
+# `#[cfg(feature = "fullstack")]` gates match the server build) but does NOT
+# enable `dioxus/web` itself. That's deliberate: dx auto-activates every feature
+# that transitively enables the web renderer, so if `editor` enabled `dioxus/web`
+# a plain `dx build` (viewer) would drag fullstack in too. dx adds the `web`
+# renderer for the client automatically; invoke via `dx serve --features editor`.
+# Never deployed.
+editor = ["fullstack"]
 
 # Native server half of the editor's fullstack build (dx enables this for the
 # server binary). Reads/writes metadata and serves photos from local disk.
