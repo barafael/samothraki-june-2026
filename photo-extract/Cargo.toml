@@ -3,7 +3,25 @@ name = "photo-extract"
 version = "0.1.0"
 edition = "2021"
 
+# Two native build tools share one extraction library:
+#   extract       -> re-reads EXIF/ffprobe metadata into assets/photo_data.json
+#   gen-manifest  -> reads the curated photo_data.json, makes WebP thumbnails,
+#                    and writes the viewer's manifest.json
+[lib]
+name = "photo_extract"
+path = "src/lib.rs"
+
+[[bin]]
+name = "extract"
+path = "src/bin/extract.rs"
+
+[[bin]]
+name = "gen-manifest"
+path = "src/bin/gen_manifest.rs"
+
 [dependencies]
 kamadak-exif = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Thumbnail generation is native-only tooling; it never enters the wasm bundle.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
