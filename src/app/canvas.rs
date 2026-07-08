@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use dioxus::prelude::*;
@@ -11,197 +10,8 @@ use crate::maplibre::helpers::{create_geojson_source, load_css, load_script};
 use crate::maplibre::manager::MapLibreManager;
 use crate::utils::log;
 
-#[cfg(feature = "fullstack")]
-use crate::server_fns;
-
-#[derive(Debug, Clone, PartialEq)]
-enum Tok {
-    LParen,
-    RParen,
-    And,
-    Or,
-    Name(String),
-}
-
-/// Recursive-descent tag expression evaluator.
-/// A photo passes if its tags satisfy the expression.
-fn tag_expr_matches(expr: &str, photo_tags: &[String]) -> bool {
-    let tokens = tokenize(expr);
-    if tokens.is_empty() {
-        return true;
-    }
-    let mut pos = 0;
-
-    eval_or(&tokens, &mut pos, photo_tags)
-}
-
-fn tag_color(name: &str) -> String {
-    let palette = [
-        "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231", "#911eb4", "#42d4f4", "#f032e6",
-        "#bfef45", "#fabed4", "#469990", "#dcbeff", "#9A6324", "#fffac8", "#800000", "#aaffc3",
-        "#808000", "#ffd8b1", "#000075", "#a9a9a9",
-    ];
-    let mut h = 0u64;
-    for b in name.bytes() {
-        h = h.wrapping_mul(31).wrapping_add(b as u64);
-    }
-    palette[(h as usize) % palette.len()].to_string()
-}
-
-/// Returns (text, color) segments for syntax-highlighted display.
-fn colorize_expr(expr: &str, known_tags: &[String]) -> Vec<(String, String)> {
-    let mut segs: Vec<(String, String)> = Vec::new();
-    let mut i = 0;
-    let bytes = expr.as_bytes();
-    while i < bytes.len() {
-        if bytes[i] == b' ' || bytes[i] == b'\t' {
-            let s = i;
-            while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
-                i += 1;
-            }
-            segs.push((expr[s..i].to_string(), "#555".into()));
-        } else if bytes[i] == b'(' || bytes[i] == b')' {
-            segs.push((expr[i..i + 1].to_string(), "#000".into()));
-            i += 1;
-        } else {
-            let s = i;
-            while i < bytes.len() && !matches!(bytes[i], b' ' | b'\t' | b'(' | b')') {
-                i += 1;
-            }
-            let word = &expr[s..i];
-            let lc = word.to_lowercase();
-            let color = match lc.as_str() {
-                "and" | "or" => "#888".into(),
-                _ if known_tags.iter().any(|t| t.eq_ignore_ascii_case(word)) => tag_color(&lc),
-                _ => "#ccc".into(),
-            };
-            segs.push((word.to_string(), color));
-        }
-    }
-    segs
-}
-
-fn tokenize(s: &str) -> Vec<Tok> {
-    let s = s.to_lowercase();
-    let mut out = Vec::new();
-    let mut i = 0;
-    let bytes = s.as_bytes();
-    while i < bytes.len() {
-        if bytes[i] == b' ' || bytes[i] == b'\t' {
-            i += 1;
-            continue;
-        }
-        match bytes[i] {
-            b'(' => {
-                out.push(Tok::LParen);
-                i += 1;
-            }
-            b')' => {
-                out.push(Tok::RParen);
-                i += 1;
-            }
-            _ => {
-                let start = i;
-                while i < bytes.len() && !matches!(bytes[i], b' ' | b'\t' | b'(' | b')') {
-                    i += 1;
-                }
-                let word: String = s[start..i].to_string();
-                match word.as_str() {
-                    "and" => out.push(Tok::And),
-                    "or" => out.push(Tok::Or),
-                    _ => out.push(Tok::Name(word)),
-                }
-            }
-        }
-    }
-    out
-}
-
-fn eval_or(tokens: &[Tok], pos: &mut usize, photo_tags: &[String]) -> bool {
-    let mut r = eval_and(tokens, pos, photo_tags);
-    while *pos < tokens.len() && tokens[*pos] == Tok::Or {
-        *pos += 1;
-        r = r || eval_and(tokens, pos, photo_tags);
-    }
-    r
-}
-
-fn eval_and(tokens: &[Tok], pos: &mut usize, photo_tags: &[String]) -> bool {
-    let mut r = eval_primary(tokens, pos, photo_tags);
-    while *pos < tokens.len() && tokens[*pos] == Tok::And {
-        *pos += 1;
-        r = r && eval_primary(tokens, pos, photo_tags);
-    }
-    r
-}
-
-fn eval_primary(tokens: &[Tok], pos: &mut usize, photo_tags: &[String]) -> bool {
-    if *pos >= tokens.len() {
-        return true;
-    }
-    match &tokens[*pos] {
-        Tok::LParen => {
-            *pos += 1;
-            let r = eval_or(tokens, pos, photo_tags);
-            if *pos < tokens.len() && tokens[*pos] == Tok::RParen {
-                *pos += 1;
-            }
-            r
-        }
-        Tok::Name(name) => {
-            *pos += 1;
-            photo_tags.iter().any(|t| t.eq_ignore_ascii_case(name))
-        }
-        _ => true,
-    }
-}
-
 static PHOTO_PANEL_MIN_PCT: f64 = 20.0;
 static PHOTO_PANEL_MAX_PCT: f64 = 80.0;
-
-#[cfg(not(feature = "fullstack"))]
-const LS_KEY: &str = "my_holiday_photo_tags";
-
-#[cfg(not(feature = "fullstack"))]
-fn load_tags_from_store() -> HashMap<String, Vec<String>> {
-    let window = match web_sys::window() {
-        Some(w) => w,
-        None => return HashMap::new(),
-    };
-    let ls = match window.local_storage() {
-        Ok(Some(s)) => s,
-        _ => return HashMap::new(),
-    };
-    match ls.get_item(LS_KEY) {
-        Ok(Some(val)) => serde_json::from_str(&val).unwrap_or_default(),
-        _ => HashMap::new(),
-    }
-}
-
-#[cfg(not(feature = "fullstack"))]
-fn save_tags_to_store(tags: &HashMap<String, Vec<String>>) {
-    let window = match web_sys::window() {
-        Some(w) => w,
-        None => return,
-    };
-    let ls = match window.local_storage() {
-        Ok(Some(s)) => s,
-        _ => return,
-    };
-    if let Ok(json) = serde_json::to_string(tags) {
-        let _ = ls.set_item(LS_KEY, &json);
-    }
-}
-
-fn collect_all_tags(tags_map: &HashMap<String, Vec<String>>) -> Vec<String> {
-    let mut set = std::collections::BTreeSet::new();
-    for tags in tags_map.values() {
-        for t in tags {
-            set.insert(t.clone());
-        }
-    }
-    set.into_iter().collect()
-}
 
 fn exif_date_part(exif: &str) -> String {
     exif.split(' ').next().unwrap_or(exif).replace(':', "-")
@@ -218,9 +28,26 @@ fn photo_date_range(photos: &[PhotoEntry]) -> (String, String) {
     (min.clone(), max.clone())
 }
 
+/// Full-resolution image URL for a photo, routed through the asset base so it
+/// resolves to R2 in production and root-relative locally. Thumbnails
+/// (`photo.thumb`) are generated and published but not yet consumed by the UI.
+fn full_url(photo: &PhotoEntry) -> String {
+    crate::config::asset_url(&photo.path)
+}
+
+/// URL for a video's browser-playable (H.264) transcode: the originals are HEVC
+/// and won't play in <video>, so videos are served from `media/` (transcoded),
+/// while photos stay on `photos/`. `path` is stored as `photos/<file>`. Routed
+/// through the asset base so it resolves to R2 in production.
+fn web_video_url(path: &str) -> String {
+    let file = path.strip_prefix("photos/").unwrap_or(path);
+    crate::config::asset_url(&format!("media/{}", file))
+}
+
 /// Toggle the `.picking` CSS class on the map container. The class forces a
 /// crosshair cursor via `!important`, which reliably overrides MapLibre's own
 /// inline cursor (grab/pointer) that it sets during interaction.
+#[cfg(feature = "editor")]
 fn set_map_picking_cursor(on: bool) {
     let el = web_sys::window()
         .and_then(|w| w.document())
@@ -233,14 +60,6 @@ fn set_map_picking_cursor(on: bool) {
             list.remove_1("picking")
         };
     }
-}
-
-/// URL for a video's browser-playable (H.264) transcode: the originals are HEVC
-/// and won't play in <video>, so videos are served from `/media/` (transcoded),
-/// while photos stay on `/photos/`. `path` is stored as `photos/<file>`.
-fn web_video_url(path: &str) -> String {
-    let file = path.strip_prefix("photos/").unwrap_or(path);
-    format!("/media/{}", file)
 }
 
 /// Index of the photo `step` positions from `cur` in chronological order.
@@ -276,8 +95,8 @@ fn update_selected_on_map(path: Option<&str>) {
     ));
 }
 
-fn sync_map_source(filtered: &[PhotoEntry], tags: &HashMap<String, Vec<String>>) {
-    let gj = match photos_to_geojson(filtered, tags) {
+fn sync_map_source(filtered: &[PhotoEntry]) {
+    let gj = match photos_to_geojson(filtered) {
         Ok(g) => g,
         Err(_) => return,
     };
@@ -290,14 +109,9 @@ fn sync_map_source(filtered: &[PhotoEntry], tags: &HashMap<String, Vec<String>>)
         "try{var m=window.mapInstance;var s=m?m.getSource('holiday-photos'):null;if(s)s.setData(window.__fgj)}catch(e){}",
     );
 }
-fn apply_filters(
-    photos_all: &[PhotoEntry],
-    tags_map: &HashMap<String, Vec<String>>,
-    date_filter: &str,
-    tag_expr: &str,
-    selected_path: Option<&str>,
-) {
-    let filtered: Vec<&PhotoEntry> = photos_all
+
+fn apply_filters(photos_all: &[PhotoEntry], date_filter: &str, selected_path: Option<&str>) {
+    let filtered: Vec<PhotoEntry> = photos_all
         .iter()
         .filter(|p| {
             if !date_filter.is_empty() {
@@ -306,17 +120,11 @@ fn apply_filters(
                     return false;
                 }
             }
-            if !tag_expr.is_empty() {
-                let pts = tags_map.get(&p.path).cloned().unwrap_or_default();
-                if !tag_expr_matches(tag_expr, &pts) {
-                    return false;
-                }
-            }
             true
         })
+        .cloned()
         .collect();
-    let owned: Vec<PhotoEntry> = filtered.into_iter().cloned().collect();
-    sync_map_source(&owned, tags_map);
+    sync_map_source(&filtered);
     update_selected_on_map(selected_path);
 }
 
@@ -338,52 +146,13 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
     let pan_client_x = use_signal(|| 0.0);
     let pan_client_y = use_signal(|| 0.0);
 
-    // Tag state
-    let photo_tags = use_signal(HashMap::<String, Vec<String>>::new);
-    let all_tags = use_signal(|| collect_all_tags(&HashMap::new()));
-    let new_tag_input = use_signal(String::new);
-    let tags_loaded = use_signal(|| false);
-
-    // Tab state
+    // Tab state. The Annotate tab (and everything it drives) is editor-only.
     let active_tab = use_signal(|| "map".to_string());
 
-    // Annotation state
-    static NO_GPS_JSON: &str = include_str!("../../assets/photos_no_gps.json");
-    let all_no_gps: Vec<String> = {
-        serde_json::from_str::<serde_json::Value>(NO_GPS_JSON)
-            .ok()
-            .and_then(|v| {
-                let files = v.get("files_no_gps")?;
-                let images = files.get("images")?.as_array()?;
-                let videos = files.get("videos")?.as_array()?;
-                let all: Vec<String> = images
-                    .iter()
-                    .chain(videos.iter())
-                    .filter_map(|f| f.as_str().map(String::from))
-                    .collect();
-                Some(all)
-            })
-            .unwrap_or_default()
-    };
-    // Reactive: drop files that have since been annotated (now present in
-    // `photos`), so the dropdown shrinks as locations are assigned.
-    let no_gps_filenames: Vec<String> = {
-        let annotated: std::collections::HashSet<String> =
-            photos.read().iter().map(|p| p.filename.clone()).collect();
-        all_no_gps
-            .iter()
-            .filter(|f| !annotated.contains(*f))
-            .cloned()
-            .collect()
-    };
-    let annotate_filename = use_signal(String::new);
-    let annotate_lat = use_signal(String::new);
-    let annotate_lng = use_signal(String::new);
-    let annotate_saving = use_signal(|| false);
-    let annotate_status = use_signal(String::new);
-    let preview_url = use_signal(String::new);
-    // When true, the next click on the map fills the lat/lng fields.
-    let picking_location = use_signal(|| false);
+    // ---- Annotation state (editor only) ----
+    #[cfg(feature = "editor")]
+    let annotate = annotation::use_annotation_state(photos);
+
     // Double-click a photo to view it fullscreen; ESC exits.
     let fullscreen = use_signal(|| false);
 
@@ -404,75 +173,24 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
         });
     }
 
-    // Reset zoom/pan whenever the annotation preview changes, so each photo
-    // opens at 1:1 (the pan/zoom signals are shared with the gallery view).
-    {
-        let mut zl = zoom_level;
-        let mut px = pan_x;
-        let mut py = pan_y;
-        let pu = preview_url;
-        use_effect(move || {
-            let _ = pu.read();
-            zl.set(1.0);
-            px.set(0.0);
-            py.set(0.0);
-        });
-    }
-
-    // Load tags from server
-    {
-        let mut pt = photo_tags;
-        let mut at = all_tags;
-        let mut tl = tags_loaded;
-        use_future(move || async move {
-            if *tl.read() {
-                return;
-            }
-            #[cfg(feature = "fullstack")]
-            match server_fns::load_tags().await {
-                Ok(tags) => {
-                    at.set(collect_all_tags(&tags));
-                    pt.set(tags);
-                    tl.set(true);
-                }
-                Err(e) => log::error_(&format!("Failed to load tags: {:?}", e)),
-            }
-            #[cfg(not(feature = "fullstack"))]
-            {
-                let tags = load_tags_from_store();
-                at.set(collect_all_tags(&tags));
-                pt.set(tags);
-                tl.set(true);
-            }
-        });
-    }
-
-    // Filter state
+    // Filter state (date only)
     let filter_date = use_signal(String::new);
-    let filter_expr = use_signal(String::new);
 
     // Shared rebuild function using Rc
     let rebuild: Rc<dyn Fn()> = {
         let photos_sig = photos;
-        let pt = photo_tags;
         let fd = filter_date;
-        let fe = filter_expr;
         let sp = selected_photo;
         Rc::new(move || {
             let photos_all = photos_sig.read().clone();
-            let tags = pt.read().clone();
             let date = fd.read().clone();
-            let expr = fe.read().clone();
             let sel_path = sp.read().as_ref().map(|p| p.path.clone());
-            apply_filters(&photos_all, &tags, &date, &expr, sel_path.as_deref());
+            apply_filters(&photos_all, &date, sel_path.as_deref());
         })
     };
 
-    // Clone rebuild Rc's for all callback groups
     let rebuild_init = rebuild.clone();
     let rebuild_filters = rebuild.clone();
-    let rebuild_tags = rebuild.clone();
-    let rebuild_pills = rebuild.clone();
 
     // Map initialization (use_effect)
     let photos_init = photos;
@@ -481,20 +199,12 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
     let sel_idx_init = selected_idx;
     let prev_id_init = prev_feature_id;
     let mg_init = manager;
-    let pt_init = photo_tags;
-    let _pt_click = photo_tags;
-    // Captured by the map click handler for "pick a location" mode.
-    let pick_lat_init = annotate_lat;
-    let pick_lng_init = annotate_lng;
-    let pick_status_init = annotate_status;
-    let picking_init = picking_location;
     // Captured by the marker-click handler so clicking a marker in annotate mode
-    // loads that photo into the form for re-positioning.
+    // loads that photo into the form for re-positioning (editor only).
+    #[cfg(feature = "editor")]
     let edit_tab_init = active_tab;
-    let edit_fname_init = annotate_filename;
-    let edit_lat_init = annotate_lat;
-    let edit_lng_init = annotate_lng;
-    let edit_preview_init = preview_url;
+    #[cfg(feature = "editor")]
+    let annotate_init = annotate;
 
     use_effect(move || {
         // Read the signal so the effect re-runs once photos finish loading
@@ -508,8 +218,7 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
         let _ = load_css("https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css");
 
         let center = calculate_center(&photos_init.read());
-        let tags_map = pt_init.read().clone();
-        let geojson = match photos_to_geojson(&photos_init.read(), &tags_map) {
+        let geojson = match photos_to_geojson(&photos_init.read()) {
             Ok(gj) => gj,
             Err(e) => {
                 log::error_(&format!("Failed build GeoJSON: {:?}", e));
@@ -549,15 +258,10 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
                         let spc2 = spc;
                         let sic2 = sic;
                         let pic2 = pic;
-                        let pick_lat = pick_lat_init;
-                        let pick_lng = pick_lng_init;
-                        let pick_status = pick_status_init;
-                        let picking = picking_init;
+                        #[cfg(feature = "editor")]
                         let edit_tab = edit_tab_init;
-                        let edit_fname = edit_fname_init;
-                        let edit_lat = edit_lat_init;
-                        let edit_lng = edit_lng_init;
-                        let edit_preview = edit_preview_init;
+                        #[cfg(feature = "editor")]
+                        let ann = annotate_init;
 
                         Closure::wrap(Box::new(move || {
                             log::info("Style loaded, adding photo markers");
@@ -686,17 +390,16 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
                                     let mut pic3 = pic2;
                                     let plist3 = plist;
                                     let r3 = r2.clone();
+                                    #[cfg(feature = "editor")]
                                     let et = edit_tab;
-                                    let mut ef = edit_fname;
-                                    let mut ela = edit_lat;
-                                    let mut eln = edit_lng;
-                                    let mut ep = edit_preview;
-                                    let picking_sel = picking;
+                                    #[cfg(feature = "editor")]
+                                    let ann_click = ann;
 
                                     let ch = Closure::wrap(Box::new(move |event: JsValue| {
                                         // In pick mode, a marker click must pick coordinates, not
                                         // select the marker; let the general click handler take it.
-                                        if *picking_sel.read() {
+                                        #[cfg(feature = "editor")]
+                                        if *ann_click.picking.read() {
                                             return;
                                         }
                                         let feats =
@@ -741,14 +444,18 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
                                                         sic3.set(Some(idx));
                                                         // In annotate mode, load the clicked photo
                                                         // into the form so its location can be edited.
+                                                        #[cfg(feature = "editor")]
                                                         if *et.read() == "annotate" {
-                                                            ef.set(photo.filename.clone());
-                                                            ela.set(format!("{:.6}", photo.lat));
-                                                            eln.set(format!("{:.6}", photo.lng));
-                                                            ep.set(format!(
-                                                                "/photos/{}",
-                                                                photo.filename
-                                                            ));
+                                                            let mut a = ann_click;
+                                                            a.filename.set(photo.filename.clone());
+                                                            a.lat.set(format!("{:.6}", photo.lat));
+                                                            a.lng.set(format!("{:.6}", photo.lng));
+                                                            a.preview_url.set(
+                                                                crate::config::asset_url(&format!(
+                                                                    "photos/{}",
+                                                                    photo.filename
+                                                                )),
+                                                            );
                                                         }
                                                     }
                                                 }
@@ -763,39 +470,43 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
                                     let _ = js_sys::eval("(function(){var m=window.mapInstance;if(!m)return;m.on('mouseenter','holiday-photos-layer',function(){m.getCanvas().style.cursor='pointer'});m.on('mouseleave','holiday-photos-layer',function(){m.getCanvas().style.cursor=''})})();");
 
                                     // "Pick a location" mode: a general map click fills the
-                                    // lat/lng fields, but only while picking is active.
-                                    let pick_handler = {
-                                        let mut pick_lat = pick_lat;
-                                        let mut pick_lng = pick_lng;
-                                        let mut pick_status = pick_status;
-                                        let mut picking = picking;
-                                        Closure::wrap(Box::new(move |e: JsValue| {
-                                            if !*picking.read() {
-                                                return;
-                                            }
-                                            let lnglat =
-                                                match js_sys::Reflect::get(&e, &"lngLat".into()) {
+                                    // lat/lng fields, but only while picking is active (editor).
+                                    #[cfg(feature = "editor")]
+                                    {
+                                        let pick_handler = {
+                                            let mut a = ann;
+                                            Closure::wrap(Box::new(move |e: JsValue| {
+                                                if !*a.picking.read() {
+                                                    return;
+                                                }
+                                                let lnglat = match js_sys::Reflect::get(
+                                                    &e,
+                                                    &"lngLat".into(),
+                                                ) {
                                                     Ok(v) => v,
                                                     Err(_) => return,
                                                 };
-                                            let lng = js_sys::Reflect::get(&lnglat, &"lng".into())
-                                                .ok()
-                                                .and_then(|v| v.as_f64());
-                                            let lat = js_sys::Reflect::get(&lnglat, &"lat".into())
-                                                .ok()
-                                                .and_then(|v| v.as_f64());
-                                            if let (Some(lat), Some(lng)) = (lat, lng) {
-                                                pick_lat.set(format!("{:.6}", lat));
-                                                pick_lng.set(format!("{:.6}", lng));
-                                                pick_status.set("Location picked".to_string());
-                                                picking.set(false);
-                                                set_map_picking_cursor(false);
-                                            }
-                                        })
-                                            as Box<dyn FnMut(JsValue)>)
-                                    };
-                                    map_ref.on("click", pick_handler.as_ref());
-                                    pick_handler.forget();
+                                                let lng =
+                                                    js_sys::Reflect::get(&lnglat, &"lng".into())
+                                                        .ok()
+                                                        .and_then(|v| v.as_f64());
+                                                let lat =
+                                                    js_sys::Reflect::get(&lnglat, &"lat".into())
+                                                        .ok()
+                                                        .and_then(|v| v.as_f64());
+                                                if let (Some(lat), Some(lng)) = (lat, lng) {
+                                                    a.lat.set(format!("{:.6}", lat));
+                                                    a.lng.set(format!("{:.6}", lng));
+                                                    a.status.set("Location picked".to_string());
+                                                    a.picking.set(false);
+                                                    set_map_picking_cursor(false);
+                                                }
+                                            })
+                                                as Box<dyn FnMut(JsValue)>)
+                                        };
+                                        map_ref.on("click", pick_handler.as_ref());
+                                        pick_handler.forget();
+                                    }
 
                                     log::info("Click handler set");
                                     r3();
@@ -833,43 +544,27 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
         "transform 0.15s"
     };
     let (date_min, date_max) = photo_date_range(&photos.read());
-    let colored_tokens = colorize_expr(&filter_expr(), &all_tags());
-
-    // Pre-compute tag pill data for the selected photo
-    let selected_tag_data: Vec<(String, String)> = match selected_photo() {
-        Some(ref photo) => {
-            let cur_tags = photo_tags
-                .read()
-                .get(&photo.path)
-                .cloned()
-                .unwrap_or_default();
-            cur_tags
-                .into_iter()
-                .map(|t| (t, photo.path.clone()))
-                .collect()
-        }
-        None => Vec::new(),
-    };
 
     // Nav button photos
     let photos_p = photos;
     let photos_n = photos;
 
-    // Pre-compute tab styles
+    // Pre-compute tab styles (editor only — the viewer has no tab bar).
+    #[cfg(feature = "editor")]
     let is_map_tab = active_tab() == "map";
+    #[cfg(feature = "editor")]
     let is_annotate_tab = active_tab() == "annotate";
+    #[cfg(feature = "editor")]
     let map_tab_style = format!("padding:8px 16px; border:none; background:{}; color:{}; font-size:0.85rem; cursor:pointer; border-bottom:{};",
         if is_map_tab { "#16213e" } else { "transparent" },
         if is_map_tab { "#fff" } else { "#888" },
         if is_map_tab { "2px solid #ff6b35" } else { "2px solid transparent" },
     );
+    #[cfg(feature = "editor")]
     let annotate_tab_style = format!("padding:8px 16px; border:none; background:{}; color:{}; font-size:0.85rem; cursor:pointer; border-bottom:{};",
         if is_annotate_tab { "#16213e" } else { "transparent" },
         if is_annotate_tab { "#fff" } else { "#888" },
         if is_annotate_tab { "2px solid #ff6b35" } else { "2px solid transparent" },
-    );
-    let save_btn_style = format!("margin-top:8px; padding:8px 16px; border:none; border-radius:4px; background:#ff6b35; color:#fff; font-size:0.85rem; cursor:pointer;{}",
-        if annotate_saving() { " opacity:0.6;" } else { "" },
     );
 
     rsx! {
@@ -878,28 +573,36 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
             class: "split-container",
             style: "display:flex; flex-direction:column; flex:1; overflow:hidden;",
 
-            // Tab bar
-            div {
-                style: "display:flex; align-items:center; gap:0; padding:0; background:#1a1a2e; border-bottom:1px solid #333; flex-shrink:0;",
-                button {
-                    style: "{map_tab_style}",
-                    onclick: {
-                        let mut at = active_tab;
-                        move |_| at.set("map".to_string())
-                    },
-                    "🗺 Map"
-                }
-                button {
-                    style: "{annotate_tab_style}",
-                    onclick: {
-                        let mut at = active_tab;
-                        move |_| at.set("annotate".to_string())
-                    },
-                    "📍 Annotate"
-                }
+            // Tab bar. In the viewer there's only the map, so the tab bar is
+            // editor-only (the Annotate tab pulls in all editing UI).
+            {
+                #[cfg(feature = "editor")]
+                { rsx! {
+                    div {
+                        style: "display:flex; align-items:center; gap:0; padding:0; background:#1a1a2e; border-bottom:1px solid #333; flex-shrink:0;",
+                        button {
+                            style: "{map_tab_style}",
+                            onclick: {
+                                let mut at = active_tab;
+                                move |_| at.set("map".to_string())
+                            },
+                            "🗺 Map"
+                        }
+                        button {
+                            style: "{annotate_tab_style}",
+                            onclick: {
+                                let mut at = active_tab;
+                                move |_| at.set("annotate".to_string())
+                            },
+                            "📍 Annotate"
+                        }
+                    }
+                } }
+                #[cfg(not(feature = "editor"))]
+                { rsx! {} }
             }
 
-            // Filter bar (map mode only)
+            // Filter bar (map mode only) — date filter.
             if active_tab() == "map" {
                 div {
                     style: "display:flex; align-items:center; gap:10px; padding:6px 12px; background:#1a1a2e; color:#ccc; font-size:0.8rem; font-family:sans-serif; border-bottom:1px solid #333; flex-shrink:0;",
@@ -920,39 +623,13 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
                             }
                         },
                     }
-                    span { style: "color:#666;", "Tags" }
-                    div {
-                        style: "position:relative; flex:1; min-width:180px; height:1.4rem; font-family:monospace; font-size:0.75rem;",
-                        div {
-                            style: "position:absolute; inset:0; pointer-events:none; white-space:pre; overflow:hidden; padding:2px 6px; border:1px solid transparent; line-height:1.4rem;",
-                            for (txt, clr) in &colored_tokens {
-                                span { style: "color:{clr};", "{txt}" }
-                            }
-                        }
-                        input {
-                            r#type: "text",
-                            placeholder: "beach and (sunset or family)",
-                            style: "position:relative; width:100%; height:100%; background:transparent; color:transparent; caret-color:#ccc; border:1px solid #444; border-radius:3px; padding:2px 6px; font:inherit; outline:none; box-sizing:border-box;",
-                            value: "{filter_expr()}",
-                            oninput: {
-                                let mut fe = filter_expr;
-                                let r = rebuild_filters.clone();
-                                move |e| {
-                                    fe.set(e.value().to_string());
-                                    r();
-                                }
-                            },
-                        }
-                    }
                     button {
                         style: "padding:1px 10px; border-radius:3px; border:1px solid #555; background:#222; color:#aaa; font-size:0.75rem; cursor:pointer;",
                         onclick: {
                             let mut fd = filter_date;
-                            let mut fe = filter_expr;
                             let r = rebuild_filters.clone();
                             move |_| {
                                 fd.set(String::new());
-                                fe.set(String::new());
                                 r();
                             }
                         },
@@ -1041,531 +718,573 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
                     class: "photo-panel",
                     style: "width: {split_pos()}%; overflow:hidden; display:flex; flex-direction:column; background:#111; color:#eee; font-family:sans-serif;",
 
-                    if active_tab() == "annotate" {
-                        div {
-                            style: "flex:1; display:flex; flex-direction:column; overflow:hidden; padding:12px; gap:8px; font-size:0.8rem;",
+                    {
+                        // Annotate tab (editor only). When active, render the form.
+                        #[cfg(feature = "editor")]
+                        if active_tab() == "annotate" {
+                            annotation::annotate_panel(
+                                photos,
+                                annotate,
+                                zoom_level,
+                                img_dragging,
+                                pan_x,
+                                pan_y,
+                                pan_client_x,
+                                pan_client_y,
+                                cursor,
+                                img_transition,
+                            )
+                        } else {
+                            detail_panel(
+                                selected_photo,
+                                selected_idx,
+                                prev_feature_id,
+                                photos_p,
+                                photos_n,
+                                zoom_level,
+                                pan_x,
+                                pan_y,
+                                pan_anchor_x,
+                                pan_anchor_y,
+                                pan_client_x,
+                                pan_client_y,
+                                img_dragging,
+                                fullscreen,
+                                cursor,
+                                img_transition,
+                            )
+                        }
 
-                            h3 { style: "margin:0 0 4px; font-size:0.95rem;", "Location Annotation" }
-                            p { style: "margin:0; color:#999; font-size:0.75rem;", "Assign GPS coordinates to files without location data." }
+                        #[cfg(not(feature = "editor"))]
+                        detail_panel(
+                            selected_photo,
+                            selected_idx,
+                            prev_feature_id,
+                            photos_p,
+                            photos_n,
+                            zoom_level,
+                            pan_x,
+                            pan_y,
+                            pan_anchor_x,
+                            pan_anchor_y,
+                            pan_client_x,
+                            pan_client_y,
+                            img_dragging,
+                            fullscreen,
+                            cursor,
+                            img_transition,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
-                            label { style: "color:#888; margin-top:4px;", "File" }
-                            select {
-                                style: "width:100%; background:#222; color:#ccc; border:1px solid #444; border-radius:3px; padding:4px 6px; font-size:0.75rem;",
-                                value: "{annotate_filename()}",
-                                onchange: {
-                                    let mut af = annotate_filename;
-                                    let mut al = annotate_lat;
-                                    let mut alng = annotate_lng;
-                                    let mut st = annotate_status;
-                                    let mut pu = preview_url;
-                                    move |e| {
-                                        let fname = e.value().to_string();
-                                        af.set(fname.clone());
-                                        al.set(String::new());
-                                        alng.set(String::new());
-                                        // The photo is served directly from the source dir, so the
-                                        // preview URL needs no server round-trip.
-                                        if fname.is_empty() {
-                                            st.set(String::new());
-                                            pu.set(String::new());
-                                        } else {
-                                            st.set("Photo loaded".to_string());
-                                            pu.set(format!("/photos/{}", fname));
-                                        }
-                                    }
-                                },
-                                option { value: "", "Select a file…" }
-                                // An already-annotated photo (clicked on the map) isn't in the
-                                // no-GPS list; surface it so the select reflects what's loaded.
-                                if !annotate_filename().is_empty() && !no_gps_filenames.contains(&annotate_filename()) {
-                                    option { value: "{annotate_filename()}", "{annotate_filename()} (editing)" }
-                                }
-                                for fname in &no_gps_filenames {
-                                    option { value: "{fname}", "{fname}" }
-                                }
-                            }
-
-                            label { style: "color:#888; margin-top:4px;", "Latitude" }
-                            input {
-                                r#type: "number",
-                                step: "any",
-                                style: "width:100%; background:#222; color:#ccc; border:1px solid #444; border-radius:3px; padding:4px 6px; font-size:0.75rem; box-sizing:border-box;",
-                                value: "{annotate_lat()}",
-                                placeholder: "e.g. 40.4831",
-                                oninput: {
-                                    let mut al = annotate_lat;
-                                    move |e| al.set(e.value().to_string())
-                                },
-                            }
-
-                            label { style: "color:#888; margin-top:4px;", "Longitude" }
-                            input {
-                                r#type: "number",
-                                step: "any",
-                                style: "width:100%; background:#222; color:#ccc; border:1px solid #444; border-radius:3px; padding:4px 6px; font-size:0.75rem; box-sizing:border-box;",
-                                value: "{annotate_lng()}",
-                                placeholder: "e.g. 25.6455",
-                                oninput: {
-                                    let mut al = annotate_lng;
-                                    move |e| al.set(e.value().to_string())
-                                },
-                            }
-
-                            // Pick-a-location button: toggles map click-to-pick mode
-                            button {
-                                style: if picking_location() {
-                                    "margin-top:6px; width:100%; padding:8px; border:none; border-radius:4px; background:#3a7bd5; color:#fff; font-size:0.8rem; cursor:pointer;"
-                                } else {
-                                    "margin-top:6px; width:100%; padding:8px; border:1px solid #3a7bd5; border-radius:4px; background:transparent; color:#8ab4f0; font-size:0.8rem; cursor:pointer;"
-                                },
-                                onclick: {
-                                    let mut picking = picking_location;
-                                    let mut status = annotate_status;
-                                    move |_| {
-                                        let now = !picking();
-                                        picking.set(now);
-                                        set_map_picking_cursor(now);
-                                        status.set(if now {
-                                            "Click the map to pick a location".to_string()
-                                        } else {
-                                            String::new()
-                                        });
-                                    }
-                                },
-                                if picking_location() { "Click map to pick… (cancel)" } else { "📍 Pick a location on map" }
-                            }
-
-                            // Save button
-                            button {
-                                style: "{save_btn_style}",
-                                disabled: annotate_saving(),
-                                onclick: {
-                                    let af = annotate_filename;
-                                    let al = annotate_lat;
-                                    let alng = annotate_lng;
-                                    let mut saving = annotate_saving;
-                                    let mut status = annotate_status;
-                                    let no_gps = no_gps_filenames.clone();
-                                    move |_| {
-                                        let fname = af.read().clone();
-                                        if fname.is_empty() { status.set("Select a file".to_string()); return; }
-                                        {
-                                            let _: f64 = match al.read().parse() { Ok(v) => v, Err(_) => { status.set("Invalid latitude".to_string()); return; } };
-                                            let _: f64 = match alng.read().parse() { Ok(v) => v, Err(_) => { status.set("Invalid longitude".to_string()); return; } };
-                                        }
-                                        saving.set(true);
-                                        status.set("Saving...".to_string());
-
-                                        // The file to load once this save succeeds: the next one
-                                        // in the no-GPS list, or empty if this was the last.
-                                        let next_file = no_gps
-                                            .iter()
-                                            .position(|f| *f == fname)
-                                            .and_then(|i| no_gps.get(i + 1))
-                                            .cloned()
-                                            .unwrap_or_default();
-
-                                        #[cfg(feature = "fullstack")]
-                                        {
-                                            let lat = al.read().parse::<f64>().unwrap_or(0.0);
-                                            let lng = alng.read().parse::<f64>().unwrap_or(0.0);
-                                            let mut af = af;
-                                            let mut al = al;
-                                            let mut alng = alng;
-                                            let mut ps = photos;
-                                            let mut pu2 = preview_url;
-                                            spawn({
-                                                let r2 = rebuild_tags.clone();
-                                                async move {
-                                                    match server_fns::save_annotation(fname.clone(), lat, lng).await {
-                                                        Ok(entry) => {
-                                                            let mut list = ps.read().clone();
-                                                            if let Some(pos) = list.iter().position(|e| e.filename == fname) {
-                                                                list[pos] = entry;
-                                                            } else {
-                                                                list.push(entry);
-                                                            }
-                                                            ps.set(list);
-                                                            saving.set(false);
-                                                            al.set(String::new());
-                                                            alng.set(String::new());
-                                                            // Auto-advance to the next unannotated file.
-                                                            af.set(next_file.clone());
-                                                            if next_file.is_empty() {
-                                                                status.set("Saved! No more files.".to_string());
-                                                                pu2.set(String::new());
-                                                            } else {
-                                                                status.set(format!("Saved! Next: {}", next_file));
-                                                                pu2.set(format!("/photos/{}", next_file));
-                                                            }
-                                                            r2();
-                                                        }
-                                                        Err(e) => {
-                                                            status.set(format!("Error: {:?}", e));
-                                                            saving.set(false);
-                                                        }
-                                                    }
-                                                }
-                                            });
-                                        }
-
-                                        #[cfg(not(feature = "fullstack"))]
-                                        {
-                                            let mut af = af;
-                                            af.set(next_file);
-                                            status.set("Saved (in-memory, server required for persistence)".to_string());
-                                            saving.set(false);
-                                        }
-                                    }
-                                },
-                                if annotate_saving() { "Saving…" } else { "Save Location" }
-                            }
-
-                            // Status message
-                            if !annotate_status().is_empty() {
-                                p { style: "margin:4px 0 0; font-size:0.75rem; color:#ff6b35;", "{annotate_status()}" }
-                            }
-
-                            // Photo preview — pan/zoom like the main gallery view.
-                            if !preview_url().is_empty() {
-                                div {
-                                    style: "flex:1; position:relative; overflow:hidden; min-height:0; background:#000; border-radius:4px; margin-top:4px;",
-                                    div {
-                                        style: "width:100%; height:100%; display:flex; align-items:center; justify-content:center; overflow:hidden; cursor:{cursor};",
-                                        onmousedown: {
-                                            let mut id = img_dragging;
-                                            let mut pcx = pan_client_x;
-                                            let mut pcy = pan_client_y;
-                                            move |e| {
-                                                if zoom_level() > 1.05 {
-                                                    pcx.set(e.data.coordinates().client().x);
-                                                    pcy.set(e.data.coordinates().client().y);
-                                                    id.set(true);
-                                                    e.prevent_default();
-                                                }
-                                            }
-                                        },
-                                        img {
-                                            style: "max-width:100%; max-height:100%; object-fit:contain; border-radius:4px; transition:{img_transition}; transform: translate({pan_x()}px, {pan_y()}px) scale({zoom_level()});",
-                                            src: "{preview_url()}",
-                                        }
-                                    }
-                                    div {
-                                        style: "position:absolute; bottom:8px; right:8px; display:flex; gap:4px;",
-                                        button {
-                                            style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:1.2rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
-                                            onclick: {
-                                                let mut zl = zoom_level;
-                                                move |_| zl.set((zl() * 1.5_f64).min(10.0))
-                                            },
-                                            "+"
-                                        }
-                                        button {
-                                            style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:1.2rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
-                                            onclick: {
-                                                let mut zl = zoom_level;
-                                                move |_| zl.set((zl() / 1.5_f64).max(0.25))
-                                            },
-                                            "−"
-                                        }
-                                        button {
-                                            style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:0.8rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
-                                            onclick: {
-                                                let mut zl = zoom_level;
-                                                let mut px = pan_x;
-                                                let mut py = pan_y;
-                                                move |_| { zl.set(1.0); px.set(0.0); py.set(0.0); }
-                                            },
-                                            "1:1"
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Tips
-                            div { style: "border-top:1px solid #333; padding-top:8px; font-size:0.7rem; color:#666;",
-                                p { style: "margin:0 0 2px;", "Use the map to find coordinates, then enter them above." }
-                                p { style: "margin:0;", "Saved photos will appear on the Map tab with the rest." }
+/// The photo detail/lightbox panel: selected photo with zoom/pan, time-ordered
+/// prev/next navigation, or an empty-state prompt. Shared by editor and viewer.
+#[allow(clippy::too_many_arguments)]
+fn detail_panel(
+    selected_photo: Signal<Option<PhotoEntry>>,
+    selected_idx: Signal<Option<usize>>,
+    prev_feature_id: Signal<Option<String>>,
+    photos_p: Signal<Vec<PhotoEntry>>,
+    photos_n: Signal<Vec<PhotoEntry>>,
+    zoom_level: Signal<f64>,
+    pan_x: Signal<f64>,
+    pan_y: Signal<f64>,
+    pan_anchor_x: Signal<f64>,
+    pan_anchor_y: Signal<f64>,
+    pan_client_x: Signal<f64>,
+    pan_client_y: Signal<f64>,
+    img_dragging: Signal<bool>,
+    fullscreen: Signal<bool>,
+    cursor: &'static str,
+    img_transition: &'static str,
+) -> Element {
+    if let Some(photo) = selected_photo() {
+        rsx! {
+            div {
+                style: if fullscreen() {
+                    "position:fixed; inset:0; z-index:9999; background:#000; display:flex; flex-direction:column; overflow:hidden;"
+                } else {
+                    "flex:1; display:flex; flex-direction:column; overflow:hidden; position:relative;"
+                },
+                div {
+                    style: "flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; padding:8px; cursor:{cursor};",
+                    ondoubleclick: {
+                        let mut fs = fullscreen;
+                        move |_| { let now = !fs(); fs.set(now); }
+                    },
+                    onmousedown: {
+                        let mut id = img_dragging;
+                        let mut pax = pan_anchor_x;
+                        let mut pay = pan_anchor_y;
+                        let mut pcx = pan_client_x;
+                        let mut pcy = pan_client_y;
+                        let px = pan_x;
+                        let py = pan_y;
+                        move |e| {
+                            if zoom_level() > 1.05 {
+                                pax.set(px());
+                                pay.set(py());
+                                pcx.set(e.data.coordinates().client().x);
+                                pcy.set(e.data.coordinates().client().y);
+                                id.set(true);
+                                e.prevent_default();
                             }
                         }
-                    } else if let Some(photo) = selected_photo() {
-                        div {
-                            style: if fullscreen() {
-                                "position:fixed; inset:0; z-index:9999; background:#000; display:flex; flex-direction:column; overflow:hidden;"
-                            } else {
-                                "flex:1; display:flex; flex-direction:column; overflow:hidden; position:relative;"
+                    },
+                    if photo.media_type.starts_with("video/") {
+                        video {
+                            style: "max-width:100%; max-height:100%; border-radius:4px;",
+                            src: web_video_url(&photo.path),
+                            controls: "true",
+                            autoplay: "true",
+                            r#loop: "true",
+                        }
+                    } else {
+                        img {
+                            style: "max-width:100%; max-height:100%; object-fit:contain; border-radius:4px; transition:{img_transition}; transform: translate({pan_x()}px, {pan_y()}px) scale({zoom_level()});",
+                            src: full_url(&photo),
+                        }
+                    }
+                }
+                div {
+                    style: "position:absolute; bottom:8px; right:8px; display:flex; gap:4px; z-index:1;",
+                    if fullscreen() {
+                        button {
+                            style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:0.9rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
+                            title: "Exit fullscreen (Esc)",
+                            onclick: {
+                                let mut fs = fullscreen;
+                                move |_| fs.set(false)
                             },
-                            div {
-                                style: "flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; padding:8px; cursor:{cursor};",
-                                ondoubleclick: {
-                                    let mut fs = fullscreen;
-                                    move |_| { let now = !fs(); fs.set(now); }
-                                },
-                                onmousedown: {
-                                    let mut id = img_dragging;
-                                    let mut pax = pan_anchor_x;
-                                    let mut pay = pan_anchor_y;
-                                    let mut pcx = pan_client_x;
-                                    let mut pcy = pan_client_y;
-                                    let px = pan_x;
-                                    let py = pan_y;
-                                    move |e| {
-                                        if zoom_level() > 1.05 {
-                                            pax.set(px());
-                                            pay.set(py());
-                                            pcx.set(e.data.coordinates().client().x);
-                                            pcy.set(e.data.coordinates().client().y);
-                                            id.set(true);
-                                            e.prevent_default();
-                                        }
-                                    }
-                                },
-                                if photo.media_type.starts_with("video/") {
-                                    video {
-                                        style: "max-width:100%; max-height:100%; border-radius:4px;",
-                                        src: web_video_url(&photo.path),
-                                        controls: "true",
-                                        autoplay: "true",
-                                        r#loop: "true",
-                                    }
-                                } else {
-                                    // No transform transition while dragging, so panning tracks the
-                                    // cursor in real time; keep the smooth transition for zoom.
-                                    img {
-                                        style: "max-width:100%; max-height:100%; object-fit:contain; border-radius:4px; transition:{img_transition}; transform: translate({pan_x()}px, {pan_y()}px) scale({zoom_level()});",
-                                        src: "/{photo.path}",
-                                    }
-                                }
+                            "✕"
+                        }
+                    }
+                    button {
+                        style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:1.2rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
+                        onclick: {
+                            let mut zl = zoom_level;
+                            move |_| zl.set((zl() * 1.5_f64).min(10.0))
+                        },
+                        "+"
+                    }
+                    button {
+                        style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:1.2rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
+                        onclick: {
+                            let mut zl = zoom_level;
+                            move |_| zl.set((zl() / 1.5_f64).max(0.25))
+                        },
+                        "−"
+                    }
+                    button {
+                        style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:0.8rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
+                        onclick: {
+                            let mut zl = zoom_level;
+                            let mut px = pan_x;
+                            let mut py = pan_y;
+                            move |_| {
+                                zl.set(1.0);
+                                px.set(0.0);
+                                py.set(0.0);
                             }
-                            div {
-                                style: "position:absolute; bottom:8px; right:8px; display:flex; gap:4px; z-index:1;",
-                                if fullscreen() {
-                                    button {
-                                        style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:0.9rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
-                                        title: "Exit fullscreen (Esc)",
-                                        onclick: {
-                                            let mut fs = fullscreen;
-                                            move |_| fs.set(false)
-                                        },
-                                        "✕"
-                                    }
-                                }
-                                button {
-                                    style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:1.2rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
-                                    onclick: {
-                                        let mut zl = zoom_level;
-                                        move |_| zl.set((zl() * 1.5_f64).min(10.0))
-                                    },
-                                    "+"
-                                }
-                                button {
-                                    style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:1.2rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
-                                    onclick: {
-                                        let mut zl = zoom_level;
-                                        move |_| zl.set((zl() / 1.5_f64).max(0.25))
-                                    },
-                                    "−"
-                                }
-                                button {
-                                    style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:0.8rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
-                                    onclick: {
-                                        let mut zl = zoom_level;
-                                        let mut px = pan_x;
-                                        let mut py = pan_y;
-                                        move |_| {
+                        },
+                        "1:1"
+                    }
+                }
+            }
+            div {
+                style: "display:flex; flex-direction:column; border-top:1px solid #333;",
+                div {
+                    style: "display:flex; align-items:center; gap:8px; padding:8px 12px;",
+                    button {
+                        style: "width:36px; height:36px; border:none; border-radius:4px; background:rgba(255,255,255,0.1); color:#eee; font-size:1rem; cursor:pointer;",
+                        onclick: {
+                            let mut si = selected_idx;
+                            let mut sp = selected_photo;
+                            let mut pi = prev_feature_id;
+                            let mut zl = zoom_level;
+                            let mut px = pan_x;
+                            let mut py = pan_y;
+                            move |_| {
+                                if let Some(idx) = si() {
+                                    let ni = neighbor_in_time(&photos_p.read(), idx, -1);
+                                    if let Some(ni) = ni {
+                                        if let Some(p) = photos_p.read().get(ni) {
+                                            update_selected_on_map(Some(&p.path));
+                                            sp.set(Some(p.clone()));
+                                            si.set(Some(ni));
+                                            pi.set(Some(p.path.clone()));
                                             zl.set(1.0);
                                             px.set(0.0);
                                             py.set(0.0);
                                         }
-                                    },
-                                    "1:1"
+                                    }
                                 }
+                            }
+                        },
+                        "◀"
+                    }
+                    div {
+                        style: "flex:1; text-align:center;",
+                        if let Some(idx) = selected_idx() {
+                            p { style: "margin:0; font-weight:bold; font-size:0.85rem; line-height:1.2;", "{idx + 1} / {photos_p.read().len()}" }
+                        }
+                        p { style: "margin:0; font-size:0.75rem; color:#999; line-height:1.2;", "{photo.filename}" }
+                    }
+                    button {
+                        style: "width:36px; height:36px; border:none; border-radius:4px; background:rgba(255,255,255,0.1); color:#eee; font-size:1rem; cursor:pointer;",
+                        onclick: {
+                            let mut si = selected_idx;
+                            let mut sp = selected_photo;
+                            let mut pi = prev_feature_id;
+                            let mut zl = zoom_level;
+                            let mut px = pan_x;
+                            let mut py = pan_y;
+                            move |_| {
+                                if let Some(idx) = si() {
+                                    let ni = neighbor_in_time(&photos_n.read(), idx, 1);
+                                    if let Some(ni) = ni {
+                                        if let Some(p) = photos_n.read().get(ni) {
+                                            update_selected_on_map(Some(&p.path));
+                                            sp.set(Some(p.clone()));
+                                            si.set(Some(ni));
+                                            pi.set(Some(p.path.clone()));
+                                            zl.set(1.0);
+                                            px.set(0.0);
+                                            py.set(0.0);
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "▶"
+                    }
+                }
+            }
+        }
+    } else {
+        rsx! {
+            div {
+                style: "flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#555; font-size:0.9rem; gap:8px;",
+                span { "Click a photo marker on the map" }
+                span { style: "font-size:0.8rem; color:#444;", "{photos_n.read().len()} photos" }
+            }
+        }
+    }
+}
+
+/// Editor-only annotation workflow: file picker, lat/lng entry, pick-on-map,
+/// save-back to disk. Entirely compiled out of the viewer build.
+#[cfg(feature = "editor")]
+mod annotation {
+    use super::set_map_picking_cursor;
+    use crate::data::PhotoEntry;
+    use crate::server_fns;
+    use dioxus::prelude::*;
+
+    /// Grouped annotation signals, so the map click handlers and the panel share
+    /// one small Copy struct instead of a dozen loose signals.
+    #[derive(Clone, Copy)]
+    pub struct AnnotationState {
+        pub filename: Signal<String>,
+        pub lat: Signal<String>,
+        pub lng: Signal<String>,
+        pub saving: Signal<bool>,
+        pub status: Signal<String>,
+        pub preview_url: Signal<String>,
+        pub picking: Signal<bool>,
+        /// Files without GPS, minus any already annotated this session.
+        pub no_gps: Signal<Vec<String>>,
+    }
+
+    pub fn use_annotation_state(photos: Signal<Vec<PhotoEntry>>) -> AnnotationState {
+        // Files with no GPS come from a build-time scan; this list is only needed
+        // for the editor's annotation dropdown, so it's compiled in here only.
+        static NO_GPS_JSON: &str = include_str!("../../assets/photos_no_gps.json");
+        let all_no_gps: Vec<String> = serde_json::from_str::<serde_json::Value>(NO_GPS_JSON)
+            .ok()
+            .and_then(|v| {
+                let files = v.get("files_no_gps")?;
+                let images = files.get("images")?.as_array()?;
+                let videos = files.get("videos")?.as_array()?;
+                Some(
+                    images
+                        .iter()
+                        .chain(videos.iter())
+                        .filter_map(|f| f.as_str().map(String::from))
+                        .collect(),
+                )
+            })
+            .unwrap_or_default();
+
+        let no_gps = use_signal(move || all_no_gps.clone());
+
+        // Reactive: drop files that have since been annotated (now present in
+        // `photos`), so the dropdown shrinks as locations are assigned.
+        {
+            let mut no_gps = no_gps;
+            let base = no_gps.read().clone();
+            use_effect(move || {
+                let annotated: std::collections::HashSet<String> =
+                    photos.read().iter().map(|p| p.filename.clone()).collect();
+                let filtered: Vec<String> = base
+                    .iter()
+                    .filter(|f| !annotated.contains(*f))
+                    .cloned()
+                    .collect();
+                if *no_gps.read() != filtered {
+                    no_gps.set(filtered);
+                }
+            });
+        }
+
+        AnnotationState {
+            filename: use_signal(String::new),
+            lat: use_signal(String::new),
+            lng: use_signal(String::new),
+            saving: use_signal(|| false),
+            status: use_signal(String::new),
+            preview_url: use_signal(String::new),
+            picking: use_signal(|| false),
+            no_gps,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn annotate_panel(
+        photos: Signal<Vec<PhotoEntry>>,
+        ann: AnnotationState,
+        zoom_level: Signal<f64>,
+        img_dragging: Signal<bool>,
+        pan_x: Signal<f64>,
+        pan_y: Signal<f64>,
+        pan_client_x: Signal<f64>,
+        pan_client_y: Signal<f64>,
+        cursor: &'static str,
+        img_transition: &'static str,
+    ) -> Element {
+        let no_gps_filenames = ann.no_gps.read().clone();
+        let save_btn_style = format!("margin-top:8px; padding:8px 16px; border:none; border-radius:4px; background:#ff6b35; color:#fff; font-size:0.85rem; cursor:pointer;{}",
+            if (ann.saving)() { " opacity:0.6;" } else { "" },
+        );
+
+        rsx! {
+            div {
+                style: "flex:1; display:flex; flex-direction:column; overflow:hidden; padding:12px; gap:8px; font-size:0.8rem;",
+
+                h3 { style: "margin:0 0 4px; font-size:0.95rem;", "Location Annotation" }
+                p { style: "margin:0; color:#999; font-size:0.75rem;", "Assign GPS coordinates to files without location data." }
+
+                label { style: "color:#888; margin-top:4px;", "File" }
+                select {
+                    style: "width:100%; background:#222; color:#ccc; border:1px solid #444; border-radius:3px; padding:4px 6px; font-size:0.75rem;",
+                    value: "{(ann.filename)()}",
+                    onchange: {
+                        let mut a = ann;
+                        move |e| {
+                            let fname = e.value().to_string();
+                            a.filename.set(fname.clone());
+                            a.lat.set(String::new());
+                            a.lng.set(String::new());
+                            if fname.is_empty() {
+                                a.status.set(String::new());
+                                a.preview_url.set(String::new());
+                            } else {
+                                a.status.set("Photo loaded".to_string());
+                                a.preview_url.set(crate::config::asset_url(&format!("photos/{}", fname)));
                             }
                         }
-                        div {
-                            style: "display:flex; flex-direction:column; border-top:1px solid #333;",
-                            div {
-                                style: "display:flex; align-items:center; gap:8px; padding:8px 12px;",
-                                button {
-                                    style: "width:36px; height:36px; border:none; border-radius:4px; background:rgba(255,255,255,0.1); color:#eee; font-size:1rem; cursor:pointer;",
-                                    onclick: {
-                                        let mut si = selected_idx;
-                                        let mut sp = selected_photo;
-                                        let mut pi = prev_feature_id;
-                                        let mut zl = zoom_level;
-                                        let mut px = pan_x;
-                                        let mut py = pan_y;
-                                        move |_| {
-                                            if let Some(idx) = si() {
-                                                let ni = neighbor_in_time(&photos_p.read(), idx, -1);
-                                                if let Some(ni) = ni {
-                                                    if let Some(p) = photos_p.read().get(ni) {
-                                                        update_selected_on_map(Some(&p.path));
-                                                        sp.set(Some(p.clone()));
-                                                        si.set(Some(ni));
-                                                        pi.set(Some(p.path.clone()));
-                                                        zl.set(1.0);
-                                                        px.set(0.0);
-                                                        py.set(0.0);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    },
-                                    "◀"
-                                }
-                                div {
-                                    style: "flex:1; text-align:center;",
-                                    if let Some(idx) = selected_idx() {
-                                        p { style: "margin:0; font-weight:bold; font-size:0.85rem; line-height:1.2;", "{idx + 1} / {photos_p.read().len()}" }
-                                    }
-                                    p { style: "margin:0; font-size:0.75rem; color:#999; line-height:1.2;", "{photo.filename}" }
-                                }
-                                button {
-                                    style: "width:36px; height:36px; border:none; border-radius:4px; background:rgba(255,255,255,0.1); color:#eee; font-size:1rem; cursor:pointer;",
-                                    onclick: {
-                                        let mut si = selected_idx;
-                                        let mut sp = selected_photo;
-                                        let mut pi = prev_feature_id;
-                                        let mut zl = zoom_level;
-                                        let mut px = pan_x;
-                                        let mut py = pan_y;
-                                        move |_| {
-                                            if let Some(idx) = si() {
-                                                let ni = neighbor_in_time(&photos_n.read(), idx, 1);
-                                                if let Some(ni) = ni {
-                                                    if let Some(p) = photos_n.read().get(ni) {
-                                                        update_selected_on_map(Some(&p.path));
-                                                        sp.set(Some(p.clone()));
-                                                        si.set(Some(ni));
-                                                        pi.set(Some(p.path.clone()));
-                                                        zl.set(1.0);
-                                                        px.set(0.0);
-                                                        py.set(0.0);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    },
-                                    "▶"
-                                }
-                            }
-                            div {
-                                style: "padding:6px 12px 10px; border-top:1px solid #333;",
-                                div {
-                                    style: "display:flex; flex-wrap:wrap; gap:4px; margin-bottom:6px;",
-                                    for (t, path_c) in selected_tag_data {
-                                        span {
-                                            style: "display:inline-flex; align-items:center; gap:3px; padding:2px 8px; background:#ff6b3522; border:1px solid #ff6b3544; border-radius:12px; font-size:0.75rem; color:#ddd;",
-                                            "{t}",
-                                            button {
-                                                style: "background:none; border:none; color:#ff6b35; cursor:pointer; font-size:0.8rem; padding:0; margin:0; line-height:1;",
-                                                onclick: {
-                                                    let t_c = t.clone();
-                                                    let p_c = path_c.clone();
-                                                    let mut pt = photo_tags;
-                                                    let mut at = all_tags;
-                                                    let r = rebuild_pills.clone();
-                                                    move |_| {
-                                                        let mut map = pt.write();
-                                                        let entry = map.entry(p_c.clone()).or_default();
-                                                        entry.retain(|x| x != &t_c);
-                                                        if entry.is_empty() { map.remove(&p_c); }
-                                                        let saved = map.clone();
-                                                        drop(map);
-                                    spawn(async move {
-                                        #[cfg(feature = "fullstack")]
-                                        { let _ = server_fns::save_tags(saved).await; }
-                                        #[cfg(not(feature = "fullstack"))]
-                                        save_tags_to_store(&saved);
-                                    });
-                                                        at.set(collect_all_tags(&pt.read()));
-                                                        r();
-                                                    }
-                                                },
-                                                "✕"
-                                            }
-                                        }
-                                    }
-                                }
-                                div {
-                                    style: "display:flex; gap:4px; align-items:center;",
-                                    select {
-                                        style: "flex:1; background:#222; color:#ccc; border:1px solid #444; border-radius:3px; padding:3px 6px; font-size:0.75rem;",
-                                        onchange: {
-                                            let path = photo.path.clone();
-                                            let mut pt = photo_tags;
-                                            let mut at = all_tags;
-                                            let r = rebuild_tags.clone();
-                                            move |e| {
-                                                let val = e.value().to_string();
-                                                if val.is_empty() { return; }
-                                                let mut map = pt.write();
-                                                map.entry(path.clone()).or_default().push(val);
-                                                let saved = map.clone();
-                                                drop(map);
-                                                spawn(async move {
-                                        #[cfg(feature = "fullstack")]
-                                        { let _ = server_fns::save_tags(saved).await; }
-                                        #[cfg(not(feature = "fullstack"))]
-                                        save_tags_to_store(&saved);
-                                    });
-                                                at.set(collect_all_tags(&pt.read()));
-                                                r();
-                                            }
-                                        },
-                                        option { value: "", "Add tag…" }
-                                        for tag in all_tags() {
-                                            option { value: "{tag}", "{tag}" }
-                                        }
-                                    }
-                                    input {
-                                        style: "flex:1; background:#222; color:#ccc; border:1px solid #444; border-radius:3px; padding:3px 6px; font-size:0.75rem;",
-                                        placeholder: "new tag",
-                                        value: "{new_tag_input()}",
-                                        oninput: {
-                                            let mut nti = new_tag_input;
-                                            move |e| nti.set(e.value().to_string())
-                                        },
-                                    }
-                                    button {
-                                        style: "padding:3px 10px; border:none; border-radius:3px; background:#ff6b35; color:#fff; font-size:0.75rem; cursor:pointer;",
-                                        onclick: {
-                                            let path = photo.path.clone();
-                                            let mut pt = photo_tags;
-                                            let mut at = all_tags;
-                                            let mut nti = new_tag_input;
-                                            let r = rebuild_tags.clone();
-                                            move |_| {
-                                                let val = nti.read().trim().to_string();
-                                                if val.is_empty() { return; }
-                                                let mut map = pt.write();
-                                                map.entry(path.clone()).or_default().push(val);
-                                                let saved = map.clone();
-                                                drop(map);
-                                                spawn(async move {
-                                        #[cfg(feature = "fullstack")]
-                                        { let _ = server_fns::save_tags(saved).await; }
-                                        #[cfg(not(feature = "fullstack"))]
-                                        save_tags_to_store(&saved);
-                                    });
-                                                at.set(collect_all_tags(&pt.read()));
-                                                nti.set(String::new());
-                                                r();
-                                            }
-                                        },
-                                        "Add"
-                                    }
-                                }
-                            }
-                        }
+                    },
+                    option { value: "", "Select a file…" }
+                    // An already-annotated photo (clicked on the map) isn't in the
+                    // no-GPS list; surface it so the select reflects what's loaded.
+                    if !(ann.filename)().is_empty() && !no_gps_filenames.contains(&(ann.filename)()) {
+                        option { value: "{(ann.filename)()}", "{(ann.filename)()} (editing)" }
+                    }
+                    for fname in no_gps_filenames.iter() {
+                        option { value: "{fname}", "{fname}" }
+                    }
+                }
+
+                label { style: "color:#888; margin-top:4px;", "Latitude" }
+                input {
+                    r#type: "number",
+                    step: "any",
+                    style: "width:100%; background:#222; color:#ccc; border:1px solid #444; border-radius:3px; padding:4px 6px; font-size:0.75rem; box-sizing:border-box;",
+                    value: "{(ann.lat)()}",
+                    placeholder: "e.g. 40.4831",
+                    oninput: {
+                        let mut a = ann;
+                        move |e| a.lat.set(e.value().to_string())
+                    },
+                }
+
+                label { style: "color:#888; margin-top:4px;", "Longitude" }
+                input {
+                    r#type: "number",
+                    step: "any",
+                    style: "width:100%; background:#222; color:#ccc; border:1px solid #444; border-radius:3px; padding:4px 6px; font-size:0.75rem; box-sizing:border-box;",
+                    value: "{(ann.lng)()}",
+                    placeholder: "e.g. 25.6455",
+                    oninput: {
+                        let mut a = ann;
+                        move |e| a.lng.set(e.value().to_string())
+                    },
+                }
+
+                // Pick-a-location button: toggles map click-to-pick mode
+                button {
+                    style: if (ann.picking)() {
+                        "margin-top:6px; width:100%; padding:8px; border:none; border-radius:4px; background:#3a7bd5; color:#fff; font-size:0.8rem; cursor:pointer;"
                     } else {
+                        "margin-top:6px; width:100%; padding:8px; border:1px solid #3a7bd5; border-radius:4px; background:transparent; color:#8ab4f0; font-size:0.8rem; cursor:pointer;"
+                    },
+                    onclick: {
+                        let mut a = ann;
+                        move |_| {
+                            let now = !(a.picking)();
+                            a.picking.set(now);
+                            set_map_picking_cursor(now);
+                            a.status.set(if now {
+                                "Click the map to pick a location".to_string()
+                            } else {
+                                String::new()
+                            });
+                        }
+                    },
+                    if (ann.picking)() { "Click map to pick… (cancel)" } else { "📍 Pick a location on map" }
+                }
+
+                // Save button
+                button {
+                    style: "{save_btn_style}",
+                    disabled: (ann.saving)(),
+                    onclick: {
+                        let mut a = ann;
+                        move |_| {
+                            let fname = a.filename.read().clone();
+                            if fname.is_empty() { a.status.set("Select a file".to_string()); return; }
+                            {
+                                let _: f64 = match a.lat.read().parse() { Ok(v) => v, Err(_) => { a.status.set("Invalid latitude".to_string()); return; } };
+                                let _: f64 = match a.lng.read().parse() { Ok(v) => v, Err(_) => { a.status.set("Invalid longitude".to_string()); return; } };
+                            }
+                            a.saving.set(true);
+                            a.status.set("Saving...".to_string());
+
+                            // The file to load once this save succeeds: the next one
+                            // in the no-GPS list, or empty if this was the last.
+                            let no_gps = a.no_gps.read().clone();
+                            let next_file = no_gps
+                                .iter()
+                                .position(|f| *f == fname)
+                                .and_then(|i| no_gps.get(i + 1))
+                                .cloned()
+                                .unwrap_or_default();
+
+                            let lat = a.lat.read().parse::<f64>().unwrap_or(0.0);
+                            let lng = a.lng.read().parse::<f64>().unwrap_or(0.0);
+                            let mut ps = photos;
+                            spawn(async move {
+                                match server_fns::save_annotation(fname.clone(), lat, lng).await {
+                                    Ok(entry) => {
+                                        let mut list = ps.read().clone();
+                                        if let Some(pos) = list.iter().position(|e| e.filename == fname) {
+                                            list[pos] = entry;
+                                        } else {
+                                            list.push(entry);
+                                        }
+                                        ps.set(list);
+                                        a.saving.set(false);
+                                        a.lat.set(String::new());
+                                        a.lng.set(String::new());
+                                        a.filename.set(next_file.clone());
+                                        if next_file.is_empty() {
+                                            a.status.set("Saved! No more files.".to_string());
+                                            a.preview_url.set(String::new());
+                                        } else {
+                                            a.status.set(format!("Saved! Next: {}", next_file));
+                                            a.preview_url.set(crate::config::asset_url(&format!("photos/{}", next_file)));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        a.status.set(format!("Error: {:?}", e));
+                                        a.saving.set(false);
+                                    }
+                                }
+                            });
+                        }
+                    },
+                    if (ann.saving)() { "Saving…" } else { "Save Location" }
+                }
+
+                // Status message
+                if !(ann.status)().is_empty() {
+                    p { style: "margin:4px 0 0; font-size:0.75rem; color:#ff6b35;", "{(ann.status)()}" }
+                }
+
+                // Photo preview — pan/zoom like the main gallery view.
+                if !(ann.preview_url)().is_empty() {
+                    div {
+                        style: "flex:1; position:relative; overflow:hidden; min-height:0; background:#000; border-radius:4px; margin-top:4px;",
                         div {
-                            style: "flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#555; font-size:0.9rem; gap:8px;",
-                            span { "Click a photo marker on the map" }
-                            span { style: "font-size:0.8rem; color:#444;", "{photos_n.read().len()} photos" }
+                            style: "width:100%; height:100%; display:flex; align-items:center; justify-content:center; overflow:hidden; cursor:{cursor};",
+                            onmousedown: {
+                                let mut id = img_dragging;
+                                let mut pcx = pan_client_x;
+                                let mut pcy = pan_client_y;
+                                move |e| {
+                                    if zoom_level() > 1.05 {
+                                        pcx.set(e.data.coordinates().client().x);
+                                        pcy.set(e.data.coordinates().client().y);
+                                        id.set(true);
+                                        e.prevent_default();
+                                    }
+                                }
+                            },
+                            img {
+                                style: "max-width:100%; max-height:100%; object-fit:contain; border-radius:4px; transition:{img_transition}; transform: translate({pan_x()}px, {pan_y()}px) scale({zoom_level()});",
+                                src: "{(ann.preview_url)()}",
+                            }
+                        }
+                        div {
+                            style: "position:absolute; bottom:8px; right:8px; display:flex; gap:4px;",
+                            button {
+                                style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:1.2rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
+                                onclick: {
+                                    let mut zl = zoom_level;
+                                    move |_| zl.set((zl() * 1.5_f64).min(10.0))
+                                },
+                                "+"
+                            }
+                            button {
+                                style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:1.2rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
+                                onclick: {
+                                    let mut zl = zoom_level;
+                                    move |_| zl.set((zl() / 1.5_f64).max(0.25))
+                                },
+                                "−"
+                            }
+                            button {
+                                style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:0.8rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
+                                onclick: {
+                                    let mut zl = zoom_level;
+                                    let mut px = pan_x;
+                                    let mut py = pan_y;
+                                    move |_| { zl.set(1.0); px.set(0.0); py.set(0.0); }
+                                },
+                                "1:1"
+                            }
                         }
                     }
+                }
+
+                // Tips
+                div { style: "border-top:1px solid #333; padding-top:8px; font-size:0.7rem; color:#666;",
+                    p { style: "margin:0 0 2px;", "Use the map to find coordinates, then enter them above." }
+                    p { style: "margin:0;", "Saved photos will appear on the Map tab with the rest." }
                 }
             }
         }

@@ -1,10 +1,21 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 
+/// One photo/video on the map. This is the canonical data model shared between
+/// the editor's server functions (which read/write `photo_data.json`) and the
+/// viewer (which fetches `manifest.json`). The manifest generator in
+/// `photo-extract` writes JSON that MUST deserialize into this struct.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PhotoEntry {
     pub filename: String,
+    /// Full-resolution asset path, relative to the asset base (e.g.
+    /// `photos/PXL_...jpg`). Rendered through `asset_url()` in the viewer.
     pub path: String,
+    /// WebP thumbnail path relative to the asset base (e.g. `thumbs/PXL_...webp`).
+    /// Absent in older `photo_data.json` entries and for videos; falls back to
+    /// the full-res `path` when empty.
+    #[serde(default)]
+    pub thumb: String,
     pub lat: f64,
     pub lng: f64,
     pub timestamp: String,
@@ -25,10 +36,7 @@ fn compute_title(filename: &str) -> String {
     }
 }
 
-pub fn photos_to_geojson(
-    photos: &[PhotoEntry],
-    tags: &std::collections::HashMap<String, Vec<String>>,
-) -> Result<JsValue, JsValue> {
+pub fn photos_to_geojson(photos: &[PhotoEntry]) -> Result<JsValue, JsValue> {
     let features = js_sys::Array::new();
     for photo in photos {
         let feature = js_sys::Object::new();
@@ -59,13 +67,6 @@ pub fn photos_to_geojson(
         let title = compute_title(&photo.filename);
         js_sys::Reflect::set(&props, &"title".into(), &JsValue::from_str(&title))?;
 
-        let tags_arr = js_sys::Array::new();
-        if let Some(photo_tags) = tags.get(&photo.path) {
-            for t in photo_tags {
-                tags_arr.push(&JsValue::from_str(t));
-            }
-        }
-        js_sys::Reflect::set(&props, &"tags".into(), &tags_arr)?;
         js_sys::Reflect::set(&feature, &"properties".into(), &props)?;
 
         features.push(&feature);

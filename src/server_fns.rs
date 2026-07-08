@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use dioxus::prelude::*;
 
 use crate::data::PhotoEntry;
@@ -7,8 +5,6 @@ use crate::data::PhotoEntry;
 // These items are only referenced from `#[server]` fn bodies (and the server
 // router), which are stripped on the wasm client — gate them to `server` so the
 // client doesn't see them as dead code.
-#[cfg(feature = "server")]
-const TAGS_PATH: &str = "assets/photo_tags.json";
 #[cfg(feature = "server")]
 const PHOTO_DATA_PATH: &str = "assets/photo_data.json";
 
@@ -64,28 +60,6 @@ pub async fn load_photo_data() -> Result<Vec<PhotoEntry>, ServerFnError> {
     Ok(entries)
 }
 
-#[server(endpoint = "tags/load")]
-pub async fn load_tags() -> Result<HashMap<String, Vec<String>>, ServerFnError> {
-    let content = tokio::fs::read_to_string(TAGS_PATH)
-        .await
-        .unwrap_or_else(|_| "{}".to_string());
-    let tags: HashMap<String, Vec<String>> = serde_json::from_str(&content).unwrap_or_default();
-    Ok(tags)
-}
-
-#[server(endpoint = "tags/save")]
-pub async fn save_tags(tags: HashMap<String, Vec<String>>) -> Result<(), ServerFnError> {
-    let json = serde_json::to_string_pretty(&tags)?;
-    tokio::fs::write(TAGS_PATH, json)
-        .await
-        .map_err(|e| ServerFnError::ServerError {
-            message: e.to_string(),
-            code: 500,
-            details: None,
-        })?;
-    Ok(())
-}
-
 #[server(endpoint = "annotations/save")]
 pub async fn save_annotation(
     filename: String,
@@ -107,6 +81,9 @@ pub async fn save_annotation(
     } else {
         let new_entry = PhotoEntry {
             path: photo_path(&filename),
+            // Thumbnails are produced by the manifest generator at publish time,
+            // not when annotating; leave empty so the viewer falls back to full-res.
+            thumb: String::new(),
             timestamp: timestamp_from_filename(&filename),
             filename: filename.clone(),
             lat,

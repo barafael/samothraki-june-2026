@@ -42,10 +42,23 @@ web-sys = { version = "0.3", default-features = false, features = [
 
 [features]
 default = ["web"]
-# The client half of the fullstack app is built by `dx` with `features = ["web"]`.
-# It must pull in `dioxus/fullstack` so `#[server]` fns compile to client RPC stubs
-# and the `#[cfg(feature = "fullstack")]` gates match the server build.
-web = ["dioxus/web", "fullstack"]
-desktop = ["dioxus/desktop"]
+
+# VIEWER (deployed, fully static). Pure `dioxus/web` with NO fullstack: the
+# shipped WASM contains no `#[server]` machinery, no RPC stubs. All photo data
+# comes from `manifest.json` fetched at runtime; images load from ASSET_BASE_URL.
+web = ["dioxus/web"]
+
+# EDITOR (local only). The client half of the fullstack app, built by `dx` with
+# `--features editor`. Pulls in `dioxus/fullstack` so `#[server]` fns compile to
+# client RPC stubs and the `#[cfg(feature = "fullstack")]` gates match the server
+# build. Never deployed.
+editor = ["dioxus/web", "fullstack"]
+
+# Native server half of the editor's fullstack build (dx enables this for the
+# server binary). Reads/writes metadata and serves photos from local disk.
 server = ["dioxus/server", "dep:tokio", "dep:tower-http", "fullstack"]
+
+# Desktop: local disk access like the editor.
+desktop = ["dioxus/desktop", "fullstack"]
+
 fullstack = ["dioxus/fullstack"]
