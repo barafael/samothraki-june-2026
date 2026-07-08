@@ -1,0 +1,92 @@
+name: Deploy viewer to GitHub Pages
+
+# Builds the static viewer (pure dioxus/web, no fullstack) and publishes it to
+# GitHub Pages. Media is NOT built or uploaded here — photos, thumbnails, videos,
+# and manifest.json live on Cloudflare R2 and are synced separately (scripts/
+# publish.sh). CI only compiles the ~2 MB app.
+#
+# Required repository variable (Settings -> Secrets and variables -> Actions ->
+# Variables):
+#   ASSET_BASE_URL  public R2 base URL, e.g. https://pub-<hash>.r2.dev
+#                   (no trailing slash). Baked into the WASM at build time; the
+#                   viewer fetches manifest.json and images from here.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One in-flight deploy at a time; let a newer push supersede an older run.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  # Project site is served under /<repo>/, so the app's own assets must resolve
+  # against that base path. ASSET_BASE_URL (R2) is absolute and unaffected.
+  BASE_PATH: ${{ github.event.repository.name }}
+  DIOXUS_VERSION: "0.7.9"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable + wasm target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Keep the dx CLI and wasm artifacts warm across runs.
+          shared-key: viewer-wasm
+
+      - name: Install dx CLI
+        run: |
+          # binstall grabs a prebuilt dx; fall back to building from source.
+          cargo binstall -y --version "${DIOXUS_VERSION}" dioxus-cli \
+            || cargo install --locked --version "${DIOXUS_VERSION}" dioxus-cli
+          dx --version
+
+      - name: Build viewer bundle
+        env:
+          # build.rs forwards this into the WASM via cargo:rustc-env (dx does not
+          # propagate shell env to rustc on its own — see build.rs).
+          ASSET_BASE_URL: ${{ vars.ASSET_BASE_URL }}
+        run: |
+          if [ -z "${ASSET_BASE_URL}" ]; then
+            echo "::error::Repository variable ASSET_BASE_URL is not set. The viewer would fetch assets root-relative from Pages instead of R2." >&2
+            exit 1
+          fi
+          echo "Building with ASSET_BASE_URL=${ASSET_BASE_URL} base-path=${BASE_PATH}"
+          dx build --release --platform web --base-path "${BASE_PATH}"
+
+      - name: Add SPA 404 fallback
+        # Pages serves 404.html for unknown paths; copy index.html so deep links
+        # / refreshes on the client-side app don't 404.
+        run: cp target/dx/my-holiday/release/web/public/index.html \
+                target/dx/my-holiday/release/web/public/404.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/dx/my-holiday/release/web/public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

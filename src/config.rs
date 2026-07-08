@@ -15,10 +15,13 @@
 
 /// Asset base URL, resolved at compile time. Empty (root-relative) by default.
 /// Override with `ASSET_BASE_URL=…` when building the viewer for deployment.
-pub const ASSET_BASE_URL: &str = match option_env!("ASSET_BASE_URL") {
-    Some(v) => v,
-    None => "",
-};
+// ASSET_BASE_URL is baked in by build.rs, which writes an `asset_base_url.rs`
+// into OUT_DIR containing `pub const ASSET_BASE_URL: &str = "...";`. We generate
+// a source file (rather than use option_env!/cargo:rustc-env) because dx's
+// multi-phase wasm build does not reliably surface env vars to option_env! in
+// the final wasm; an included source file is always part of the compile.
+// Empty string = root-relative (local editor / preview). Don't drop build.rs.
+include!(concat!(env!("OUT_DIR"), "/asset_base_url.rs"));
 
 /// Join the asset base with a relative asset path, avoiding a double slash.
 /// `rel` may or may not start with `/`; the result is always usable as a URL.
