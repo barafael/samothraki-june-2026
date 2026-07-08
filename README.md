@@ -78,54 +78,9 @@ scripts/setup.sh
 python3 -m http.server -d target/dx/my-holiday/release/web/public 8080
 ```
 
-## Deploy: GitHub Pages (app) + Cloudflare R2 (media)
+## Deploy
 
-The app is tiny (~2 MB) and lives on **GitHub Pages**; the media is ~10 GB and
-lives on **Cloudflare R2**. They deploy independently:
-
-- `.github/workflows/deploy.yml` builds the viewer and publishes it to Pages on
-  every push to `main`. It does **not** touch media.
-- `scripts/publish.sh` (run locally) syncs photos, thumbs, videos, and
-  `manifest.json` to R2 whenever the media changes.
-
-Media can't live on Pages: GitHub blocks files over **100 MiB** (some videos are
-larger), caps published sites at **1 GB** (the photos are ~6.8 GB), and Pages has
-a **100 GB/month** bandwidth soft limit. R2 has no per-file cap and **zero egress
-fees**, so it's the media host.
-
-### One-time Cloudflare setup
-
-1. Create an R2 bucket (e.g. `samothraki-holiday`).
-2. Enable public access — the auto-generated `https://pub-<hash>.r2.dev` URL is
-   fine (or attach a custom domain for CDN caching + a stable URL).
-3. **Add a CORS policy** allowing `GET` from your Pages origin. The viewer
-   `fetch`es `manifest.json` cross-origin, so without this the browser blocks it
-   (plain `<img>`/`<video>` don't need CORS, but the manifest fetch does).
-4. Create an R2 API token (Object Read/Write) and configure it as an `rclone`
-   remote named to match `R2_BUCKET` in `publish.sh`.
-
-The CORS policy on the bucket:
-
-```json
-[{ "AllowedOrigins": ["https://<user>.github.io"],
-   "AllowedMethods": ["GET"],
-   "AllowedHeaders": ["*"] }]
-```
-
-### One-time GitHub setup
-
-- Settings → Pages → Build and deployment → Source = **GitHub Actions**.
-- Settings → Secrets and variables → Actions → **Variables** → add
-  `ASSET_BASE_URL` = your R2 public URL, e.g. `https://pub-<hash>.r2.dev`
-  (no trailing slash). The workflow bakes this into the WASM; if it's unset the
-  build fails loudly rather than shipping a viewer that points at Pages.
-
-The site serves at `https://<user>.github.io/samothraki-june-2026/` (the
-workflow passes `--base-path` = the repo name so the app's own assets resolve).
-
-### Publishing updates
-
-- **Changed the app?** Push to `main` — Actions rebuilds and redeploys Pages.
-- **Added/annotated photos?** Run `scripts/publish.sh` locally to push the new
-  media and `manifest.json` to R2. (CI can't do this — the 10 GB of originals
-  aren't in git.) The first run also does the initial full upload.
+The app deploys to **GitHub Pages** (via `.github/workflows/deploy.yml` on push
+to `main`); the ~10 GB of media lives on **Cloudflare R2** (synced with
+`scripts/publish.sh`). Full setup — R2 bucket + CORS, the `ASSET_BASE_URL` repo
+variable, and the site-vs-origin URL distinction — is in [deploy.md](deploy.md).
