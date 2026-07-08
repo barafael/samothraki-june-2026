@@ -1,4 +1,5 @@
 mod app;
+mod config;
 mod data;
 mod maplibre;
 #[cfg(feature = "fullstack")]

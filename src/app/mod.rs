@@ -2,11 +2,9 @@ use dioxus::prelude::*;
 
 mod canvas;
 
+use crate::data::source::load_photos;
 use crate::data::PhotoEntry;
 use canvas::Canvas;
-
-#[cfg(feature = "fullstack")]
-use crate::server_fns;
 
 // Bundle the stylesheet through the asset pipeline so it's actually served
 // (the legacy `[web.resource] style` entry in Dioxus.toml is not copied in 0.7).
@@ -24,13 +22,9 @@ pub fn App() -> Element {
         if *photos_loaded.read() {
             return;
         }
-        #[cfg(feature = "fullstack")]
-        {
-            if let Ok(data) = server_fns::load_photo_data().await {
-                photos.set(data);
-            }
-            photos_loaded.set(true);
-        }
+        // Single seam: server fn on the editor, manifest fetch on the viewer.
+        photos.set(load_photos().await);
+        photos_loaded.set(true);
     });
 
     rsx! {
