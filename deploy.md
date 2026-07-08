@@ -14,13 +14,12 @@ fees**, so it hosts the media.
 
 ## The two URLs (don't mix them up)
 
-Replace `<user>` with your GitHub username (e.g. the owner of this repo). The
-repository is `samothraki-june-2026`.
+Repo owner is `barafael`, repository `samothraki-june-2026`.
 
 | Thing | Value | Note |
 | --- | --- | --- |
-| **Site URL** (where the app loads) | `https://<user>.github.io/samothraki-june-2026/` | Project site — **includes** the repo name as a path. |
-| **Pages origin** (for CORS) | `https://<user>.github.io` | Origin = scheme + host only, **no path**. |
+| **Site URL** (where the app loads) | `https://barafael.github.io/samothraki-june-2026/` | Project site — **includes** the repo name as a path. |
+| **Pages origin** (for CORS) | `https://barafael.github.io` | Origin = scheme + host only, **no path**. |
 
 Why they differ: a browser's CORS check matches on **origin** (scheme + host),
 never on path. Putting the `/samothraki-june-2026/` path in the R2 `AllowedOrigins`
@@ -43,7 +42,7 @@ path.
    don't need CORS, but the manifest fetch does). Use the bare **origin**:
 
    ```json
-   [{ "AllowedOrigins": ["https://<user>.github.io"],
+   [{ "AllowedOrigins": ["https://barafael.github.io"],
       "AllowedMethods": ["GET"],
       "AllowedHeaders": ["*"] }]
    ```
