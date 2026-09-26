@@ -28,26 +28,9 @@ fn photo_date_range(photos: &[PhotoEntry]) -> (String, String) {
     (min.clone(), max.clone())
 }
 
-/// Full-resolution image URL for a photo, routed through the asset base so it
-/// resolves to R2 in production and root-relative locally. Thumbnails
-/// (`photo.thumb`) are generated and published but not yet consumed by the UI.
-fn full_url(photo: &PhotoEntry) -> String {
-    crate::config::asset_url(&photo.path)
-}
-
-/// URL for a video's browser-playable (H.264) transcode: the originals are HEVC
-/// and won't play in <video>, so videos are served from `media/` (transcoded),
-/// while photos stay on `photos/`. `path` is stored as `photos/<file>`. Routed
-/// through the asset base so it resolves to R2 in production.
-fn web_video_url(path: &str) -> String {
-    let file = path.strip_prefix("photos/").unwrap_or(path);
-    crate::config::asset_url(&format!("media/{}", file))
-}
-
 /// Toggle the `.picking` CSS class on the map container. The class forces a
 /// crosshair cursor via `!important`, which reliably overrides MapLibre's own
 /// inline cursor (grab/pointer) that it sets during interaction.
-#[cfg(feature = "editor")]
 fn set_map_picking_cursor(on: bool) {
     let el = web_sys::window()
         .and_then(|w| w.document())
@@ -146,11 +129,10 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
     let pan_client_x = use_signal(|| 0.0);
     let pan_client_y = use_signal(|| 0.0);
 
-    // Tab state. The Annotate tab (and everything it drives) is editor-only.
+    // Tab state: "map" or "annotate".
     let active_tab = use_signal(|| "map".to_string());
 
-    // ---- Annotation state (editor only) ----
-    #[cfg(feature = "editor")]
+    // ---- Annotation state ----
     let annotate = annotation::use_annotation_state(photos);
 
     // Double-click a photo to view it fullscreen; ESC exits.
@@ -200,10 +182,8 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
     let prev_id_init = prev_feature_id;
     let mg_init = manager;
     // Captured by the marker-click handler so clicking a marker in annotate mode
-    // loads that photo into the form for re-positioning (editor only).
-    #[cfg(feature = "editor")]
+    // loads that photo into the form for re-positioning.
     let edit_tab_init = active_tab;
-    #[cfg(feature = "editor")]
     let annotate_init = annotate;
 
     use_effect(move || {
@@ -258,9 +238,7 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
                         let spc2 = spc;
                         let sic2 = sic;
                         let pic2 = pic;
-                        #[cfg(feature = "editor")]
                         let edit_tab = edit_tab_init;
-                        #[cfg(feature = "editor")]
                         let ann = annotate_init;
 
                         Closure::wrap(Box::new(move || {
@@ -390,15 +368,12 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
                                     let mut pic3 = pic2;
                                     let plist3 = plist;
                                     let r3 = r2.clone();
-                                    #[cfg(feature = "editor")]
                                     let et = edit_tab;
-                                    #[cfg(feature = "editor")]
                                     let ann_click = ann;
 
                                     let ch = Closure::wrap(Box::new(move |event: JsValue| {
                                         // In pick mode, a marker click must pick coordinates, not
                                         // select the marker; let the general click handler take it.
-                                        #[cfg(feature = "editor")]
                                         if *ann_click.picking.read() {
                                             return;
                                         }
@@ -444,18 +419,12 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
                                                         sic3.set(Some(idx));
                                                         // In annotate mode, load the clicked photo
                                                         // into the form so its location can be edited.
-                                                        #[cfg(feature = "editor")]
                                                         if *et.read() == "annotate" {
                                                             let mut a = ann_click;
                                                             a.filename.set(photo.filename.clone());
                                                             a.lat.set(format!("{:.6}", photo.lat));
                                                             a.lng.set(format!("{:.6}", photo.lng));
-                                                            a.preview_url.set(
-                                                                crate::config::asset_url(&format!(
-                                                                    "photos/{}",
-                                                                    photo.filename
-                                                                )),
-                                                            );
+                                                            a.preview_url.set(photo.media_url());
                                                         }
                                                     }
                                                 }
@@ -470,8 +439,7 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
                                     let _ = js_sys::eval("(function(){var m=window.mapInstance;if(!m)return;m.on('mouseenter','holiday-photos-layer',function(){m.getCanvas().style.cursor='pointer'});m.on('mouseleave','holiday-photos-layer',function(){m.getCanvas().style.cursor=''})})();");
 
                                     // "Pick a location" mode: a general map click fills the
-                                    // lat/lng fields, but only while picking is active (editor).
-                                    #[cfg(feature = "editor")]
+                                    // lat/lng fields, but only while picking is active.
                                     {
                                         let pick_handler = {
                                             let mut a = ann;
@@ -549,18 +517,14 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
     let photos_p = photos;
     let photos_n = photos;
 
-    // Pre-compute tab styles (editor only — the viewer has no tab bar).
-    #[cfg(feature = "editor")]
+    // Pre-compute tab styles.
     let is_map_tab = active_tab() == "map";
-    #[cfg(feature = "editor")]
     let is_annotate_tab = active_tab() == "annotate";
-    #[cfg(feature = "editor")]
     let map_tab_style = format!("padding:8px 16px; border:none; background:{}; color:{}; font-size:0.85rem; cursor:pointer; border-bottom:{};",
         if is_map_tab { "#16213e" } else { "transparent" },
         if is_map_tab { "#fff" } else { "#888" },
         if is_map_tab { "2px solid #ff6b35" } else { "2px solid transparent" },
     );
-    #[cfg(feature = "editor")]
     let annotate_tab_style = format!("padding:8px 16px; border:none; background:{}; color:{}; font-size:0.85rem; cursor:pointer; border-bottom:{};",
         if is_annotate_tab { "#16213e" } else { "transparent" },
         if is_annotate_tab { "#fff" } else { "#888" },
@@ -573,33 +537,25 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
             class: "split-container",
             style: "display:flex; flex-direction:column; flex:1; overflow:hidden;",
 
-            // Tab bar. In the viewer there's only the map, so the tab bar is
-            // editor-only (the Annotate tab pulls in all editing UI).
-            {
-                #[cfg(feature = "editor")]
-                { rsx! {
-                    div {
-                        style: "display:flex; align-items:center; gap:0; padding:0; background:#1a1a2e; border-bottom:1px solid #333; flex-shrink:0;",
-                        button {
-                            style: "{map_tab_style}",
-                            onclick: {
-                                let mut at = active_tab;
-                                move |_| at.set("map".to_string())
-                            },
-                            "🗺 Map"
-                        }
-                        button {
-                            style: "{annotate_tab_style}",
-                            onclick: {
-                                let mut at = active_tab;
-                                move |_| at.set("annotate".to_string())
-                            },
-                            "📍 Annotate"
-                        }
-                    }
-                } }
-                #[cfg(not(feature = "editor"))]
-                { rsx! {} }
+            // Tab bar
+            div {
+                style: "display:flex; align-items:center; gap:0; padding:0; background:#1a1a2e; border-bottom:1px solid #333; flex-shrink:0;",
+                button {
+                    style: "{map_tab_style}",
+                    onclick: {
+                        let mut at = active_tab;
+                        move |_| at.set("map".to_string())
+                    },
+                    "🗺 Map"
+                }
+                button {
+                    style: "{annotate_tab_style}",
+                    onclick: {
+                        let mut at = active_tab;
+                        move |_| at.set("annotate".to_string())
+                    },
+                    "📍 Annotate"
+                }
             }
 
             // Filter bar (map mode only) — date filter.
@@ -718,45 +674,21 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
                     class: "photo-panel",
                     style: "width: {split_pos()}%; overflow:hidden; display:flex; flex-direction:column; background:#111; color:#eee; font-family:sans-serif;",
 
-                    {
-                        // Annotate tab (editor only). When active, render the form.
-                        #[cfg(feature = "editor")]
-                        if active_tab() == "annotate" {
-                            annotation::annotate_panel(
-                                photos,
-                                annotate,
-                                zoom_level,
-                                img_dragging,
-                                pan_x,
-                                pan_y,
-                                pan_client_x,
-                                pan_client_y,
-                                cursor,
-                                img_transition,
-                            )
-                        } else {
-                            detail_panel(
-                                selected_photo,
-                                selected_idx,
-                                prev_feature_id,
-                                photos_p,
-                                photos_n,
-                                zoom_level,
-                                pan_x,
-                                pan_y,
-                                pan_anchor_x,
-                                pan_anchor_y,
-                                pan_client_x,
-                                pan_client_y,
-                                img_dragging,
-                                fullscreen,
-                                cursor,
-                                img_transition,
-                            )
-                        }
-
-                        #[cfg(not(feature = "editor"))]
-                        detail_panel(
+                    if active_tab() == "annotate" {
+                        {annotation::annotate_panel(
+                            photos,
+                            annotate,
+                            zoom_level,
+                            img_dragging,
+                            pan_x,
+                            pan_y,
+                            pan_client_x,
+                            pan_client_y,
+                            cursor,
+                            img_transition,
+                        )}
+                    } else {
+                        {detail_panel(
                             selected_photo,
                             selected_idx,
                             prev_feature_id,
@@ -773,7 +705,7 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
                             fullscreen,
                             cursor,
                             img_transition,
-                        )
+                        )}
                     }
                 }
             }
@@ -782,7 +714,7 @@ pub fn Canvas(photos: Signal<Vec<PhotoEntry>>, photos_loaded: Signal<bool>) -> E
 }
 
 /// The photo detail/lightbox panel: selected photo with zoom/pan, time-ordered
-/// prev/next navigation, or an empty-state prompt. Shared by editor and viewer.
+/// prev/next navigation, or an empty-state prompt.
 #[allow(clippy::too_many_arguments)]
 fn detail_panel(
     selected_photo: Signal<Option<PhotoEntry>>,
@@ -838,7 +770,7 @@ fn detail_panel(
                     if photo.media_type.starts_with("video/") {
                         video {
                             style: "max-width:100%; max-height:100%; border-radius:4px;",
-                            src: web_video_url(&photo.path),
+                            src: photo.media_url(),
                             controls: "true",
                             autoplay: "true",
                             r#loop: "true",
@@ -846,7 +778,7 @@ fn detail_panel(
                     } else {
                         img {
                             style: "max-width:100%; max-height:100%; object-fit:contain; border-radius:4px; transition:{img_transition}; transform: translate({pan_x()}px, {pan_y()}px) scale({zoom_level()});",
-                            src: full_url(&photo),
+                            src: photo.media_url(),
                         }
                     }
                 }
@@ -976,14 +908,29 @@ fn detail_panel(
     }
 }
 
-/// Editor-only annotation workflow: file picker, lat/lng entry, pick-on-map,
-/// save-back to disk. Entirely compiled out of the viewer build.
-#[cfg(feature = "editor")]
+/// Annotation workflow: file picker, lat/lng entry, pick-on-map, save via the
+/// `save_annotation` server function (password-protected on the server).
 mod annotation {
     use super::set_map_picking_cursor;
-    use crate::data::PhotoEntry;
-    use crate::server_fns;
+    use crate::api;
+    use crate::data::{is_video_file, photo_url, video_url, PhotoEntry};
     use dioxus::prelude::*;
+
+    /// localStorage key remembering the annotation password in this browser.
+    const PASSWORD_KEY: &str = "samothraki.annotatePassword";
+
+    fn local_storage() -> Option<web_sys::Storage> {
+        web_sys::window()?.local_storage().ok()?
+    }
+
+    /// Preview URL for a file picked from the no-GPS list.
+    pub fn preview_url(filename: &str) -> String {
+        if is_video_file(filename) {
+            video_url(filename)
+        } else {
+            photo_url(filename)
+        }
+    }
 
     /// Grouped annotation signals, so the map click handlers and the panel share
     /// one small Copy struct instead of a dozen loose signals.
@@ -996,13 +943,15 @@ mod annotation {
         pub status: Signal<String>,
         pub preview_url: Signal<String>,
         pub picking: Signal<bool>,
+        /// Annotation password, sent with every save.
+        pub password: Signal<String>,
         /// Files without GPS, minus any already annotated this session.
         pub no_gps: Signal<Vec<String>>,
     }
 
     pub fn use_annotation_state(photos: Signal<Vec<PhotoEntry>>) -> AnnotationState {
         // Files with no GPS come from a build-time scan; this list is only needed
-        // for the editor's annotation dropdown, so it's compiled in here only.
+        // for the annotation dropdown.
         static NO_GPS_JSON: &str = include_str!("../../assets/photos_no_gps.json");
         let all_no_gps: Vec<String> = serde_json::from_str::<serde_json::Value>(NO_GPS_JSON)
             .ok()
@@ -1041,7 +990,19 @@ mod annotation {
             });
         }
 
+        // Restore the remembered password (client only: effects don't run
+        // during server-side rendering, where there is no localStorage).
+        let mut password = use_signal(String::new);
+        use_effect(move || {
+            if let Some(saved) =
+                local_storage().and_then(|s| s.get_item(PASSWORD_KEY).ok().flatten())
+            {
+                password.set(saved);
+            }
+        });
+
         AnnotationState {
+            password,
             filename: use_signal(String::new),
             lat: use_signal(String::new),
             lng: use_signal(String::new),
@@ -1094,7 +1055,7 @@ mod annotation {
                                 a.preview_url.set(String::new());
                             } else {
                                 a.status.set("Photo loaded".to_string());
-                                a.preview_url.set(crate::config::asset_url(&format!("photos/{}", fname)));
+                                a.preview_url.set(preview_url(&fname));
                             }
                         }
                     },
@@ -1158,6 +1119,19 @@ mod annotation {
                     if (ann.picking)() { "Click map to pick… (cancel)" } else { "📍 Pick a location on map" }
                 }
 
+                label { style: "color:#888; margin-top:4px;", "Password" }
+                input {
+                    r#type: "password",
+                    style: "width:100%; background:#222; color:#ccc; border:1px solid #444; border-radius:3px; padding:4px 6px; font-size:0.75rem; box-sizing:border-box;",
+                    value: "{(ann.password)()}",
+                    placeholder: "annotation password",
+                    autocomplete: "current-password",
+                    oninput: {
+                        let mut a = ann;
+                        move |e| a.password.set(e.value().to_string())
+                    },
+                }
+
                 // Save button
                 button {
                     style: "{save_btn_style}",
@@ -1188,8 +1162,12 @@ mod annotation {
                             let lng = a.lng.read().parse::<f64>().unwrap_or(0.0);
                             let mut ps = photos;
                             spawn(async move {
-                                match server_fns::save_annotation(fname.clone(), lat, lng).await {
+                                let password = a.password.read().clone();
+                                match api::save_annotation(fname.clone(), lat, lng, password.clone()).await {
                                     Ok(entry) => {
+                                        if let Some(storage) = local_storage() {
+                                            let _ = storage.set_item(PASSWORD_KEY, &password);
+                                        }
                                         let mut list = ps.read().clone();
                                         if let Some(pos) = list.iter().position(|e| e.filename == fname) {
                                             list[pos] = entry;
@@ -1206,11 +1184,11 @@ mod annotation {
                                             a.preview_url.set(String::new());
                                         } else {
                                             a.status.set(format!("Saved! Next: {}", next_file));
-                                            a.preview_url.set(crate::config::asset_url(&format!("photos/{}", next_file)));
+                                            a.preview_url.set(preview_url(&next_file));
                                         }
                                     }
                                     Err(e) => {
-                                        a.status.set(format!("Error: {:?}", e));
+                                        a.status.set(format!("Error: {e}"));
                                         a.saving.set(false);
                                     }
                                 }
@@ -1244,13 +1222,21 @@ mod annotation {
                                     }
                                 }
                             },
-                            img {
-                                style: "max-width:100%; max-height:100%; object-fit:contain; border-radius:4px; transition:{img_transition}; transform: translate({pan_x()}px, {pan_y()}px) scale({zoom_level()});",
-                                src: "{(ann.preview_url)()}",
+                            if (ann.preview_url)().starts_with("/videos/") {
+                                video {
+                                    style: "max-width:100%; max-height:100%; border-radius:4px;",
+                                    src: "{(ann.preview_url)()}",
+                                    controls: "true",
+                                }
+                            } else {
+                                img {
+                                    style: "max-width:100%; max-height:100%; object-fit:contain; border-radius:4px; transition:{img_transition}; transform: translate({pan_x()}px, {pan_y()}px) scale({zoom_level()});",
+                                    src: "{(ann.preview_url)()}",
+                                }
                             }
                         }
                         div {
-                            style: "position:absolute; bottom:8px; right:8px; display:flex; gap:4px;",
+                            style: "position:absolute; bottom:8px; right:8px; display:flex; gap:4px; z-index:1;",
                             button {
                                 style: "width:32px; height:32px; border:none; border-radius:4px; background:rgba(255,255,255,0.15); color:#eee; font-size:1.2rem; cursor:pointer; display:flex; align-items:center; justify-content:center;",
                                 onclick: {

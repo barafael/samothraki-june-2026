@@ -1,9 +1,9 @@
+mod api;
 mod app;
-mod config;
 mod data;
 mod maplibre;
-#[cfg(feature = "fullstack")]
-mod server_fns;
+#[cfg(feature = "server")]
+mod server;
 mod utils;
 
 #[cfg(target_arch = "wasm32")]
@@ -66,19 +66,14 @@ fn main() {
     init_logging();
     utils::log::info("My Holiday app starting...");
 
-    // dx serve --fullstack passes `server` for the native server build.
-    // Serve the original photos at `/photos/<file>` and the H.264 transcodes of
-    // the (HEVC) videos at `/media/<file>` — both directly, no copying.
+    // Server build (fly.io, or the server half of `dx serve`): the Dioxus app
+    // and server functions, plus the media routes.
     #[cfg(feature = "server")]
-    dioxus::serve(|| async move {
-        use tower_http::services::ServeDir;
-        let router = dioxus::server::router(app::App)
-            .nest_service("/photos", ServeDir::new(server_fns::PHOTOS_SRC_DIR))
-            .nest_service("/media", ServeDir::new(server_fns::MEDIA_WEB_DIR));
-        Ok(router)
-    });
+    dioxus::serve(
+        || async move { Ok(dioxus::server::router(app::App).merge(server::media::router())) },
+    );
 
-    // Everything else (plain web, or fullstack client build)
+    // Browser (WASM) build.
     #[cfg(not(feature = "server"))]
-    dioxus::LaunchBuilder::new().launch(app::App);
+    dioxus::launch(app::App);
 }

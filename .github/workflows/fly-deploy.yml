@@ -1,0 +1,43 @@
+name: Deploy to fly.io
+
+# Builds the Dockerfile on fly's remote builder and deploys it. Media is not
+# part of the image (the app proxies it from GitHub Releases), so this only
+# ships code.
+#
+# Requires the repository secret FLY_API_TOKEN (`fly tokens create deploy`).
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      # Annotation commits made by the app itself: the running app reads
+      # photo_data.json from GitHub, so they need no redeploy.
+      - assets/photo_data.json
+      - "**.md"
+  workflow_dispatch:
+
+concurrency:
+  group: fly-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check FLY_API_TOKEN
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::error::Repository secret FLY_API_TOKEN is not set (see deploy.md)." >&2
+            exit 1
+          fi
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
