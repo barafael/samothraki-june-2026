@@ -9,12 +9,17 @@ edition = "2021"
 
 [dependencies]
 console_error_panic_hook = "0.1"
-dioxus = { version = "=0.7.9", features = [] }
+dioxus = { version = "=0.7.9", features = ["fullstack"] }
 js-sys = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 serde_json = "1"
-tokio = { version = "1", features = ["fs"], optional = true }
+
+# Server-only (enabled by the `server` feature below).
+base64 = { version = "0.22", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "rustls-tls-native-roots"], optional = true }
+tokio = { version = "1", features = ["fs", "io-util", "sync"], optional = true }
+tower = { version = "0.5", features = ["util"], optional = true }
 tower-http = { version = "0.6", features = ["fs"], optional = true }
 
 wasm-bindgen = "0.2"
@@ -43,26 +48,23 @@ web-sys = { version = "0.3", default-features = false, features = [
 [features]
 default = ["web"]
 
-# VIEWER (deployed, fully static). Pure `dioxus/web` with NO fullstack: the
-# shipped WASM contains no `#[server]` machinery, no RPC stubs. All photo data
-# comes from `manifest.json` fetched at runtime; images load from ASSET_BASE_URL.
+# Browser client (WASM). dx builds this half of the fullstack app with `web`.
 web = ["dioxus/web"]
 
-# EDITOR (local only). Additive layer on top of the `web` renderer: it pulls in
-# `dioxus/fullstack` (so `#[server]` fns compile to client RPC stubs and the
-# `#[cfg(feature = "fullstack")]` gates match the server build) but does NOT
-# enable `dioxus/web` itself. That's deliberate: dx auto-activates every feature
-# that transitively enables the web renderer, so if `editor` enabled `dioxus/web`
-# a plain `dx build` (viewer) would drag fullstack in too. dx adds the `web`
-# renderer for the client automatically; invoke via `dx serve --features editor`.
-# Never deployed.
-editor = ["fullstack"]
+# Native server (what runs on fly.io, and locally under `dx serve`). Serves the
+# app, the photo-data server functions, and the media routes (local files or
+# proxied from GitHub Releases).
+server = [
+  "dioxus/server",
+  "dep:base64",
+  "dep:reqwest",
+  "dep:tokio",
+  "dep:tower",
+  "dep:tower-http",
+]
 
-# Native server half of the editor's fullstack build (dx enables this for the
-# server binary). Reads/writes metadata and serves photos from local disk.
-server = ["dioxus/server", "dep:tokio", "dep:tower-http", "fullstack"]
-
-# Desktop: local disk access like the editor.
-desktop = ["dioxus/desktop", "fullstack"]
-
-fullstack = ["dioxus/fullstack"]
+[profile.release]
+# No DWARF in release builds. The std debug info rustup ships would otherwise
+# end up in the WASM, and the wasm-opt that dx 0.7.9 uses aborts on it
+# ("unsupported version of DWARF"), leaving the bundle unoptimized.
+strip = "debuginfo"

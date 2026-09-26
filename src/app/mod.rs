@@ -2,7 +2,6 @@ use dioxus::prelude::*;
 
 mod canvas;
 
-use crate::data::source::load_photos;
 use crate::data::PhotoEntry;
 use canvas::Canvas;
 
@@ -15,15 +14,16 @@ pub fn App() -> Element {
     let mut photos = use_signal(Vec::<PhotoEntry>::new);
     let mut photos_loaded = use_signal(|| false);
 
-    // Load photo data at runtime (not `include_str!`), so annotations saved by
-    // the server show up without a rebuild and writing the file doesn't retrigger
-    // one (it's no longer a compile-time dependency).
+    // Photo data comes from the server at runtime, so annotations show up
+    // without a rebuild. On failure, render an empty map rather than nothing.
     use_future(move || async move {
         if *photos_loaded.read() {
             return;
         }
-        // Single seam: server fn on the editor, manifest fetch on the viewer.
-        photos.set(load_photos().await);
+        match crate::api::load_photo_data().await {
+            Ok(entries) => photos.set(entries),
+            Err(e) => crate::utils::log::error_(&format!("load_photo_data failed: {e}")),
+        }
         photos_loaded.set(true);
     });
 

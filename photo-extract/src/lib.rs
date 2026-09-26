@@ -1,7 +1,6 @@
-//! Native photo-metadata extraction shared by the `extract` and `gen-manifest`
-//! binaries. Photos are served directly from `Photos-3-001/` (see the `/photos`
-//! route in the app), so nothing here copies media — it only reads metadata and,
-//! in `gen-manifest`, writes derived thumbnails.
+//! Native photo-metadata extraction used by the `extract` binary: reads EXIF
+//! (photos) and ffprobe tags (videos) from the originals in `Photos-3-001/`.
+//! Nothing here copies or modifies media.
 
 use exif::{Exif, In, Reader, Tag};
 use serde::{Deserialize, Serialize};
@@ -9,17 +8,13 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-/// Canonical photo/video record. Mirrors `my_holiday`'s `PhotoEntry`
+/// Canonical photo/video record. Mirrors the app's `PhotoEntry`
 /// (src/data/photos.rs) field-for-field so the JSON this crate writes
-/// deserializes directly in both the editor and the viewer.
+/// deserializes directly in the app.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PhotoEntry {
     pub filename: String,
     pub path: String,
-    /// WebP thumbnail path relative to the asset base (`thumbs/<stem>.webp`).
-    /// Empty until `gen-manifest` produces it.
-    #[serde(default)]
-    pub thumb: String,
     pub lat: f64,
     pub lng: f64,
     pub timestamp: String,
@@ -122,7 +117,6 @@ pub fn process_jpeg(path: &Path, rel_path: &str) -> Option<PhotoEntry> {
     Some(PhotoEntry {
         filename,
         path: format!("photos/{}", rel_path),
-        thumb: String::new(),
         lat,
         lng,
         timestamp,
@@ -160,33 +154,77 @@ pub fn process_via_ffprobe(path: &Path, rel_path: &str) -> Option<PhotoEntry> {
     let loc = tags.get("location")?.as_str()?;
     let (lat, lng) = parse_ffprobe_location(loc)?;
 
-    // Parse creation_time like "2026-06-18T16:00:37.000000Z"
-    let ts = tags
+    // creation_time is UTC ("2026-06-18T16:00:37.000000Z"); convert it to the
+    // local, EXIF-style form photos use so photos and videos sort together.
+    let timestamp = tags
         .get("creation_time")
         .or_else(|| tags.get("creation_time-eng"))
-        .or_else(|| tags.get("date"))
         .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    let timestamp = if !ts.is_empty() {
-        // Convert ISO 8601 to EXIF-like format
-        ts.replace('T', " ")
-            .trim_end_matches('Z')
-            .trim_end_matches(|c: char| c.is_ascii_digit() || c == '.')
-            .to_string()
-    } else {
-        "unknown".to_string()
-    };
+        .and_then(utc_iso_to_trip_local)
+        .unwrap_or_else(|| "unknown".to_string());
 
     Some(PhotoEntry {
         filename,
         path: format!("photos/{}", rel_path),
-        thumb: String::new(),
         lat,
         lng,
         timestamp,
         media_type: media_type.into(),
     })
+}
+
+/// Offset of local time from UTC where the photos were taken (Greece in
+/// summer, EEST). Twin of `TRIP_UTC_OFFSET_HOURS` in the app's src/server/time.rs.
+pub const TRIP_UTC_OFFSET_HOURS: i64 = 3;
+
+/// `2026-06-18T16:00:37.000000Z` (UTC) -> `2026:06:18 19:00:37` (trip-local).
+pub fn utc_iso_to_trip_local(iso: &str) -> Option<String> {
+    let num = |r: std::ops::Range<usize>| -> Option<i64> {
+        let s = iso.get(r)?;
+        s.bytes()
+            .all(|b| b.is_ascii_digit())
+            .then(|| s.parse().ok())?
+    };
+    let (y, mo, d) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    let (h, mi, s) = (num(11..13)?, num(14..16)?, num(17..19)?);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let secs = days_from_civil(y, mo, d) * 86_400
+        + h * 3_600
+        + mi * 60
+        + s
+        + TRIP_UTC_OFFSET_HOURS * 3_600;
+    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    let (y, mo, d) = civil_from_days(days);
+    Some(format!(
+        "{y:04}:{mo:02}:{d:02} {:02}:{:02}:{:02}",
+        rem / 3_600,
+        rem % 3_600 / 60,
+        rem % 60
+    ))
+}
+
+// Howard Hinnant's days <-> civil date algorithms (proleptic Gregorian).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
 }
 
 pub fn is_supported(ext: &str) -> bool {
@@ -257,6 +295,20 @@ mod tests {
     fn rejects_empty_ffprobe_location() {
         assert_eq!(parse_ffprobe_location("/"), None);
         assert_eq!(parse_ffprobe_location(""), None);
+    }
+
+    #[test]
+    fn ffprobe_time_becomes_trip_local() {
+        // Same instant as PXL_20260626_152447344.LS.mp4 in photo_data.json.
+        assert_eq!(
+            utc_iso_to_trip_local("2026-06-26T15:24:47.000000Z").as_deref(),
+            Some("2026:06:26 18:24:47")
+        );
+        assert_eq!(
+            utc_iso_to_trip_local("2026-06-30T22:30:00Z").as_deref(),
+            Some("2026:07:01 01:30:00")
+        );
+        assert_eq!(utc_iso_to_trip_local("garbage"), None);
     }
 
     #[test]

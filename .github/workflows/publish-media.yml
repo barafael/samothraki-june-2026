@@ -1,0 +1,46 @@
+name: Publish media to GitHub Releases
+
+# Runs scripts/publish_media.sh with the originals taken from Git LFS: this
+# repo's history still stores every original in Photos-3-001/ (LFS was used
+# until commit 29fc162). Generates web-sized photos and H.264 videos for
+# whatever is missing from the `photos` / `videos` releases and uploads them.
+#
+# Incremental, so re-running is cheap — but each original it has to fetch
+# counts against the repo owner's Git LFS bandwidth (all of them: ~7.3 GB).
+# If you have the originals locally, running the script there costs nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lfs_commit:
+        description: Commit whose Photos-3-001/ (in Git LFS) holds the originals
+        default: 0d846c0e7e1984df539924b5e61f03b166c56ef1
+        required: true
+
+permissions:
+  contents: write # create releases and upload assets
+
+concurrency:
+  group: publish-media
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: Publish
+        run: scripts/publish_media.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPO: ${{ github.repository }}
+          LFS_COMMIT: ${{ inputs.lfs_commit }}

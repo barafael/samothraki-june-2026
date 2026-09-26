@@ -1,0 +1,26 @@
+# fly.io app config. Deployed by .github/workflows/fly-deploy.yml on push to
+# main (or `fly deploy` by hand). Secrets — set with `fly secrets set`, never
+# here — are described in deploy.md.
+
+app = "samothraki-june-2026"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # Repo holding the `photos`/`videos` releases and assets/photo_data.json.
+  GITHUB_REPO = "barafael/samothraki-june-2026"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Scale to zero when idle; the first request after that starts a machine
+  # (a second or two) and refills the media cache from GitHub on demand.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
